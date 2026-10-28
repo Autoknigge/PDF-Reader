@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -31,10 +32,17 @@ class Speaker(
     private var tts: TextToSpeech? = null
     private var ready = false
     private var startRequestedPage = -1
+    private val prefs = context.getSharedPreferences("pdfreader", Context.MODE_PRIVATE)
+    private var onReady: (() -> Unit)? = null
 
     var state = State.IDLE
         private set
     private var page = 0
+
+    /** Vorlesegeschwindigkeit (0,5 = langsam … 2,0 = sehr schnell). */
+    var rate: Float = prefs.getFloat("tts_rate", 1.0f)
+        private set
+    private var voiceName: String? = prefs.getString("tts_voice", null)
 
     init {
         tts = TextToSpeech(context) { status ->
@@ -44,6 +52,8 @@ class Speaker(
                 if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                     tts?.language = Locale.getDefault()
                 }
+                tts?.setSpeechRate(rate)
+                applySavedVoice()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
                     override fun onError(id: String?) {}
@@ -51,6 +61,7 @@ class Speaker(
                         if (id != null && id.endsWith("_last")) main.post { nextPage() }
                     }
                 })
+                main.post { onReady?.invoke() }
                 if (startRequestedPage >= 0) {
                     val p = startRequestedPage; startRequestedPage = -1
                     main.post { start(p) }
@@ -58,6 +69,59 @@ class Speaker(
             } else {
                 main.post { onInfo("Sprachausgabe ist auf diesem Gerät nicht verfügbar.") }
             }
+        }
+    }
+
+    private fun applySavedVoice() {
+        val name = voiceName ?: return
+        val v = try {
+            tts?.voices?.firstOrNull { it.name == name }
+        } catch (e: Exception) {
+            null
+        }
+        if (v != null) tts?.voice = v
+    }
+
+    /** Wird aufgerufen, sobald die Sprachausgabe bereit ist (für die Einstellungen). */
+    fun whenReady(block: () -> Unit) {
+        if (ready) block() else onReady = block
+    }
+
+    fun isReady(): Boolean = ready
+
+    /** Deutsche Stimmen des Geräts (leer, falls keine installiert). */
+    fun germanVoices(): List<Voice> = try {
+        tts?.voices.orEmpty()
+            .filter { it.locale.language == "de" && !it.isNetworkConnectionRequired }
+            .sortedBy { it.name }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    fun currentVoiceName(): String? = try {
+        voiceName ?: tts?.voice?.name
+    } catch (e: Exception) {
+        voiceName
+    }
+
+    fun setRate(r: Float) {
+        rate = r.coerceIn(0.5f, 2.0f)
+        prefs.edit().putFloat("tts_rate", rate).apply()
+        tts?.setSpeechRate(rate)
+        restartIfPlaying()
+    }
+
+    fun setVoice(name: String) {
+        voiceName = name
+        prefs.edit().putString("tts_voice", name).apply()
+        applySavedVoice()
+        restartIfPlaying()
+    }
+
+    private fun restartIfPlaying() {
+        if (state == State.PLAYING) {
+            tts?.stop()
+            speakCurrent()
         }
     }
 

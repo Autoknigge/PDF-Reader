@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnOpen).setOnClickListener { pick() }
         findViewById<View>(R.id.btnOpenBig).setOnClickListener { pick() }
         findViewById<View>(R.id.btnSpeak).setOnClickListener { startSpeaking() }
+        findViewById<View>(R.id.btnReadSettings).setOnClickListener { openReadSettings() }
         btnPlayPause.setOnClickListener { togglePause() }
         findViewById<View>(R.id.btnStopRead).setOnClickListener { speaker?.stop() }
 
@@ -137,6 +138,7 @@ class MainActivity : AppCompatActivity() {
             pager.visibility = View.GONE
             tvPage.visibility = View.GONE
             findViewById<View>(R.id.btnSpeak).visibility = View.GONE
+            findViewById<View>(R.id.btnReadSettings).visibility = View.GONE
             empty.visibility = View.VISIBLE
             tvTitle.text = getString(R.string.app_name)
         } else {
@@ -183,6 +185,8 @@ class MainActivity : AppCompatActivity() {
         empty.visibility = View.GONE
         pager.visibility = View.VISIBLE
         findViewById<View>(R.id.btnSpeak).visibility = View.VISIBLE
+        findViewById<View>(R.id.btnReadSettings).visibility = View.VISIBLE
+        ensureSpeaker()
         tvPage.visibility = if (src.pages > 1) View.VISIBLE else View.GONE
         currentTitle = src.name
         tvTitle.text = src.name
@@ -191,15 +195,71 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Vorlesen ----------
 
-    private fun startSpeaking() {
-        val file = srcFile ?: return
+    private fun ensureSpeaker(): Speaker? {
+        val file = srcFile ?: return null
         if (speaker == null) {
             speaker = Speaker(this, file, srcPages,
                 onState = { playing, page -> runOnUiThread { onSpeakState(playing, page) } },
                 onInfo = { msg -> runOnUiThread { toast(msg) } })
         }
+        return speaker
+    }
+
+    private fun startSpeaking() {
+        val s = ensureSpeaker() ?: return
         readBar.visibility = View.VISIBLE
-        speaker?.start(pager.currentItem)
+        s.start(pager.currentItem)
+    }
+
+    private fun openReadSettings() {
+        val s = ensureSpeaker() ?: return
+        AlertDialog.Builder(this)
+            .setTitle("Vorlesen")
+            .setItems(arrayOf("Geschwindigkeit", "Stimme")) { _, which ->
+                if (which == 0) chooseSpeed(s) else chooseVoice(s)
+            }
+            .setNegativeButton("Schließen", null)
+            .show()
+    }
+
+    private fun chooseSpeed(s: Speaker) {
+        val labels = arrayOf("Langsam", "Etwas langsamer", "Normal", "Schneller", "Schnell", "Sehr schnell")
+        val rates = floatArrayOf(0.7f, 0.85f, 1.0f, 1.25f, 1.5f, 1.8f)
+        val current = rates.indices.minByOrNull { kotlin.math.abs(rates[it] - s.rate) } ?: 2
+        AlertDialog.Builder(this)
+            .setTitle("Geschwindigkeit")
+            .setSingleChoiceItems(labels, current) { d, which ->
+                s.setRate(rates[which])
+                d.dismiss()
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
+
+    private fun chooseVoice(s: Speaker) {
+        if (!s.isReady()) {
+            toast("Sprachausgabe wird noch geladen – bitte gleich noch einmal.")
+            return
+        }
+        val voices = s.germanVoices()
+        if (voices.isEmpty()) {
+            toast("Keine deutsche Stimme gefunden. Du kannst in den Android-Einstellungen unter „Sprachausgabe“ eine installieren.")
+            return
+        }
+        val labels = voices.mapIndexed { i, v ->
+            val land = v.locale.country.ifBlank { "" }
+            "Stimme ${i + 1}" + if (land.isNotBlank()) " ($land)" else ""
+        }.toTypedArray()
+        val currentName = s.currentVoiceName()
+        val current = voices.indexOfFirst { it.name == currentName }
+        AlertDialog.Builder(this)
+            .setTitle("Stimme")
+            .setSingleChoiceItems(labels, current) { d, which ->
+                s.setVoice(voices[which].name)
+                d.dismiss()
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
     }
 
     private fun togglePause() {

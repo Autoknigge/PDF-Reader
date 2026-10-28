@@ -47,6 +47,17 @@
             android:visibility="gone" />
 
         <TextView
+            android:id="@+id/btnReadSettings"
+            android:layout_width="44dp"
+            android:layout_height="48dp"
+            android:contentDescription="Vorlese-Einstellungen"
+            android:gravity="center"
+            android:text="⚙"
+            android:textColor="@color/gold"
+            android:textSize="22sp"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/btnOpen"
             android:layout_width="48dp"
             android:layout_height="48dp"
@@ -154,40 +165,42 @@
                         android:id="@+id/tvPrivacy"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="6dp"
+                        android:padding="4dp"
                         android:text="Datenschutz"
                         android:textColor="@color/gold"
-                        android:textSize="14sp" />
+                        android:textSize="12.5sp" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="·"
-                        android:textColor="@color/gold" />
+                        android:textColor="@color/gold"
+                        android:textSize="12.5sp" />
 
                     <TextView
                         android:id="@+id/tvImprint"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="6dp"
+                        android:padding="4dp"
                         android:text="Impressum"
                         android:textColor="@color/gold"
-                        android:textSize="14sp" />
+                        android:textSize="12.5sp" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="·"
-                        android:textColor="@color/gold" />
+                        android:textColor="@color/gold"
+                        android:textSize="12.5sp" />
 
                     <TextView
                         android:id="@+id/tvAdSettings"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="6dp"
+                        android:padding="4dp"
                         android:text="Werbe-Einstellungen"
                         android:textColor="@color/gold"
-                        android:textSize="14sp" />
+                        android:textSize="12.5sp" />
                 </LinearLayout>
 
                 <TextView
