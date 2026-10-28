@@ -146,9 +146,11 @@ class Speaker(
     /**
      * Bis zu 6 deutsche Stimmen des Geräts, die ohne Internet laufen (der Text verlässt das Gerät nicht):
      * zuerst Deutschland, dann nach Qualität. Nicht installierte Stimmen werden ausgelassen.
+     * Verweis-Einträge wie „de-DE-language“ (nur ein Zeiger auf die Standardstimme, klingt wie eine andere)
+     * entfallen; nach dem Hörtest steht die zuletzt gelistete Stimme vorn.
      */
     fun germanVoices(): List<Voice> = try {
-        tts?.voices.orEmpty()
+        val list = tts?.voices.orEmpty()
             .filter {
                 it.locale.language == "de" && !it.isNetworkConnectionRequired &&
                     !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
@@ -157,6 +159,8 @@ class Speaker(
                 compareBy<Voice>({ if (it.locale.country == "DE") 0 else 1 }, { -it.quality }, { it.name })
             )
             .take(6)
+            .filterNot { it.name.endsWith("-language", ignoreCase = true) }
+        if (list.size > 1) listOf(list.last()) + list.dropLast(1) else list
     } catch (e: Exception) {
         emptyList()
     }

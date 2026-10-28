@@ -22,7 +22,9 @@ class PdfSource(
     val file: File,
     val name: String,
     val pages: Int,
-    val wasEncrypted: Boolean
+    val wasEncrypted: Boolean,
+    /** Die Datei genau so, wie sie war (bei Passwortschutz: noch verschlüsselt) – zum Senden und Speichern. */
+    val original: File
 )
 
 /** Die PDF ist mit einem Passwort geschützt; [wrong] = das eingegebene Passwort stimmte nicht. */
@@ -39,7 +41,7 @@ object Docs {
     /** Löscht Zwischendateien, die älter als ein Tag sind. */
     fun cleanup(ctx: Context) {
         val limit = System.currentTimeMillis() - 24 * 3600 * 1000L
-        workDir(ctx).listFiles()?.forEach { if (it.lastModified() < limit) it.delete() }
+        workDir(ctx).listFiles()?.forEach { if (it.lastModified() < limit) it.deleteRecursively() }
     }
 
     /**
@@ -57,7 +59,7 @@ object Docs {
         // Schnellweg: unverschlüsselte PDF direkt mit dem Android-Betrachter prüfen.
         if (password == null && canRenderDirectly(raw)) {
             val pages = pageCount(raw)
-            if (pages > 0) return PdfSource(raw, name, pages, false)
+            if (pages > 0) return PdfSource(raw, name, pages, false, raw)
         }
 
         val doc = try {
@@ -80,13 +82,13 @@ object Docs {
                 throw IOException("„$name“ enthält keine Seiten.")
             }
             if (!it.isEncrypted) {
-                PdfSource(raw, name, pages, false)
+                PdfSource(raw, name, pages, false, raw)
             } else {
                 it.isAllSecurityToBeRemoved = true
                 val plain = File(workDir(ctx), "q${id}_offen.pdf")
                 it.save(plain)
-                raw.delete()
-                PdfSource(plain, name, pages, true)
+                // Das verschlüsselte Original bleibt für „Senden an“ / „Speichern unter“ erhalten.
+                PdfSource(plain, name, pages, true, raw)
             }
         }
     }
@@ -106,6 +108,13 @@ object Docs {
         }
     } catch (e: Exception) {
         0
+    }
+
+    /** Dateiname für Senden/Speichern: ungültige Zeichen ersetzen, auf „.pdf“ enden lassen. */
+    fun fileNameFor(name: String): String {
+        val base = name.trim().replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80).trim().ifBlank { "Dokument" }
+        return "$base.pdf"
     }
 
     fun displayName(ctx: Context, uri: Uri): String {

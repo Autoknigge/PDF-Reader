@@ -65,6 +65,18 @@
             android:gravity="center"
             android:text="📂"
             android:textSize="22sp" />
+
+        <TextView
+            android:id="@+id/btnMore"
+            android:layout_width="36dp"
+            android:layout_height="48dp"
+            android:contentDescription="Senden oder speichern"
+            android:gravity="center"
+            android:text="⋮"
+            android:textColor="@color/gold"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
     </LinearLayout>
 
     <FrameLayout

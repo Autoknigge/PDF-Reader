@@ -1,6 +1,7 @@
 package de.autoknigge.pdfreader
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -13,6 +14,7 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
 import androidx.viewpager2.widget.ViewPager2
@@ -45,6 +47,7 @@ class MainActivity : AppCompatActivity() {
     private var speaker: Speaker? = null
     private var srcFile: File? = null
     private var srcPages = 0
+    private var currentSrc: PdfSource? = null
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -54,6 +57,11 @@ class MainActivity : AppCompatActivity() {
             }
             open(uri)
         }
+    }
+
+    private val saveAs = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val src = currentSrc
+        if (uri != null && src != null) saveCopy(src, uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,6 +84,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnOpenBig).setOnClickListener { pick() }
         findViewById<View>(R.id.btnSpeak).setOnClickListener { startSpeaking() }
         findViewById<View>(R.id.btnReadSettings).setOnClickListener { openReadSettings() }
+        findViewById<View>(R.id.btnMore).setOnClickListener { openMoreMenu() }
         btnPlayPause.setOnClickListener { togglePause() }
         findViewById<View>(R.id.btnStopRead).setOnClickListener { speaker?.stop() }
 
@@ -136,6 +145,8 @@ class MainActivity : AppCompatActivity() {
             adapter = null
             srcFile = null
             srcPages = 0
+            currentSrc = null
+            findViewById<View>(R.id.btnMore).visibility = View.GONE
             currentTitle = ""
             pager.visibility = View.GONE
             tvPage.visibility = View.GONE
@@ -185,6 +196,8 @@ class MainActivity : AppCompatActivity() {
         pager.adapter = a
         srcFile = src.file
         srcPages = src.pages
+        currentSrc = src
+        findViewById<View>(R.id.btnMore).visibility = View.VISIBLE
         empty.visibility = View.GONE
         pager.visibility = View.VISIBLE
         findViewById<View>(R.id.btnSpeak).visibility = View.VISIBLE
@@ -194,6 +207,63 @@ class MainActivity : AppCompatActivity() {
         currentTitle = src.name
         tvTitle.text = src.name
         updatePageLabel()
+    }
+
+    // ---------- Senden und Speichern ----------
+
+    private fun openMoreMenu() {
+        val src = currentSrc ?: return
+        AlertDialog.Builder(this)
+            .setTitle(src.name)
+            .setItems(arrayOf("Senden an …", "Speichern unter …")) { _, which ->
+                if (which == 0) shareCopy(src) else saveAs.launch(Docs.fileNameFor(src.name))
+            }
+            .setNegativeButton("Schließen", null)
+            .show()
+    }
+
+    /** Gibt die PDF (bei Passwortschutz: die geschützte Originaldatei) an eine App nach Wahl weiter. */
+    private fun shareCopy(src: PdfSource) {
+        worker.execute {
+            val r = runCatching {
+                val dir = File(cacheDir, "lesen/teilen").apply { mkdirs() }
+                val f = File(dir, Docs.fileNameFor(src.name))
+                src.original.copyTo(f, overwrite = true)
+                FileProvider.getUriForFile(this, "$packageName.files", f)
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                r.onSuccess { uri ->
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/pdf"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        clipData = ClipData.newRawUri("", uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    try {
+                        startActivity(Intent.createChooser(send, "Senden an"))
+                    } catch (e: ActivityNotFoundException) {
+                        toast("Keine App zum Senden gefunden.")
+                    }
+                }.onFailure { toast("Die PDF konnte nicht weitergegeben werden.") }
+            }
+        }
+    }
+
+    /** Schreibt eine Kopie der PDF an den Ort, den du im Systemdialog gewählt hast. */
+    private fun saveCopy(src: PdfSource, target: Uri) {
+        worker.execute {
+            val r = runCatching {
+                val out = contentResolver.openOutputStream(target)
+                    ?: throw java.io.IOException("Zieldatei nicht beschreibbar")
+                out.use { o -> src.original.inputStream().use { it.copyTo(o, 64 * 1024) } }
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                r.onSuccess { toast("PDF gespeichert.") }
+                    .onFailure { toast("Die PDF konnte nicht gespeichert werden.") }
+            }
+        }
     }
 
     // ---------- Vorlesen ----------
