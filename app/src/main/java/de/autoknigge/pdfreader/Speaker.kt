@@ -157,16 +157,13 @@ class Speaker(
         emptyList()
     }
 
-    /** Anzahl aller deutschen Offline-Stimmen, die das Gerät meldet (vor der Kürzung auf 6). */
-    fun germanVoiceTotal(): Int = voiceCandidates().size
-
     /**
      * Bis zu 6 deutsche Stimmen des Geräts, die ohne Internet laufen (der Text verlässt das Gerät nicht).
      * Verweis-Einträge wie „de-DE-language“ (nur ein Zeiger auf die Standardstimme, klingt wie eine andere)
      * entfallen; nach dem Hörtest steht die zuletzt gelistete Stimme vorn.
      */
     fun germanVoices(): List<Voice> {
-        val list = voiceCandidates().take(6).filterNot { it.name.endsWith("-language", ignoreCase = true) }
+        val list = voiceCandidates().filterNot { it.name.endsWith("-language", ignoreCase = true) }.take(6)
         return if (list.size > 1) listOf(list.last()) + list.dropLast(1) else list
     }
 
