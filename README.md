@@ -2,7 +2,7 @@
 
 Android-App: PDFs öffnen, blättern, zoomen und vorlesen lassen – einfach und schnell. Öffnet auch passwortgeschützte PDFs (Passwortabfrage) und erscheint im System unter „Öffnen mit“, wenn man eine PDF antippt. Gratis mit AdMob-Banner. Alles läuft lokal auf dem Gerät.
 
-Paketname: `pdfreader.aab` (in der Play Console so angelegt; der Code-Namensraum bleibt `de.autoknigge.pdfreader`) – nach der Veröffentlichung im Play Store nicht mehr änderbar.
+Paketname: `de.autoknigge.pdfreader` – nach der Veröffentlichung im Play Store nicht mehr änderbar.
 
 ## Auf GitHub bauen
 Unter **Actions → Build** läuft der Build bei jedem Push. Ergebnis: Artefakt **PdfReader** (`PdfReader.apk`) zum Testen.

@@ -27,7 +27,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "pdfreader.aab"
+        applicationId = "de.autoknigge.pdfreader"
         minSdk = 29
         targetSdk = 36
         // Version zählt mit jedem Commit auf main: 1.0, 1.1 … 1.9, 2.0 (Play Store verlangt steigende Codes).
