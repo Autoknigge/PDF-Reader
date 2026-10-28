@@ -63,7 +63,7 @@ class Speaker(
                     override fun onStart(id: String?) {}
                     override fun onError(id: String?) {
                         // Fehler der Sprachausgabe bei einem Stück: nicht hängen bleiben, weiter zur nächsten Seite.
-                        if (id != null && !id.endsWith("_flush")) main.post { nextPage() }
+                        if (id != null && !id.endsWith("_lead")) main.post { nextPage() }
                     }
                     override fun onDone(id: String?) {
                         if (id != null && id.endsWith("_last")) main.post { nextPage() }
@@ -225,7 +225,9 @@ class Speaker(
     private fun enqueue(p: Int, text: String) {
         val t = tts ?: return
         val chunks = chunk(text)
-        t.speak("", TextToSpeech.QUEUE_FLUSH, null, "p${p}_flush")
+        // Kurze stille Anlaufpause: sonst gehen die ersten Worte verloren, wenn Sprachausgabe und
+        // Lautsprecher noch aufwachen. QUEUE_FLUSH räumt dabei zugleich die Warteschlange.
+        t.playSilentUtterance(350, TextToSpeech.QUEUE_FLUSH, "p${p}_lead")
         chunks.forEachIndexed { i, c ->
             val id = if (i == chunks.lastIndex) "p${p}_last" else "p${p}_$i"
             t.speak(c, TextToSpeech.QUEUE_ADD, null, id)
