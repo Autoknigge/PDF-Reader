@@ -98,7 +98,7 @@ class MainActivity : AppCompatActivity() {
         }
         Ui.underline(findViewById(R.id.tvAdSettings))
 
-        adManager = AdManager(this, findViewById<FrameLayout>(R.id.adContainer), findViewById(R.id.tvAdSettings))
+        adManager = AdManager(this, findViewById<FrameLayout>(R.id.adContainer), findViewById(R.id.tvAdSettings), true)
         Intro.run(this) {
             adManager.start()
             if (savedInstanceState == null) handleIncoming(intent)

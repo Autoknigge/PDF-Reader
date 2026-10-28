@@ -8,7 +8,7 @@ Paketname: `de.autoknigge.pdfreader` – nach der Veröffentlichung im Play Stor
 Unter **Actions → Build** läuft der Build bei jedem Push. Ergebnis: Artefakt **PdfReader** (`PdfReader.apk`) zum Testen.
 
 ## Werbung (AdMob)
-Standard sind die **Google-Test-IDs** (nur Testanzeigen). Vor der Veröffentlichung in AdMob eine App „PDF-Reader“ anlegen und die echten IDs als GitHub-Secrets `ADMOB_APP_ID`, `ADMOB_BANNER_ID`, `ADMOB_OPEN_ID` hinterlegen (App-Start-Anzeige ist derzeit nicht aktiv, nur Banner).
+Standard sind die **Google-Test-IDs** (nur Testanzeigen). Vor der Veröffentlichung in AdMob eine App „PDF-Reader“ anlegen und die echten IDs als GitHub-Secrets `ADMOB_APP_ID`, `ADMOB_BANNER_ID`, `ADMOB_OPEN_ID` hinterlegen 
 
 ## Signiert für den Play Store
 Secrets `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` (gleicher Schlüssel wie die anderen Apps). Dann entstehen `PdfReader-signiert.apk` und `PdfReader.aab`.

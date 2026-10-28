@@ -3,18 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// AdMob: Standard sind die Google-Test-IDs (zeigen nur Testanzeigen, bringen nichts ein).
-// Vor der Veröffentlichung in AdMob eine App „PDF-Reader“ anlegen und die echten IDs
-// als GitHub-Secrets ADMOB_APP_ID / ADMOB_BANNER_ID hinterlegen.
+// AdMob-IDs von PDF-Reader (öffentliche Kennungen, stehen in jeder APK).
+// Überschreibbar per GitHub-Secrets ADMOB_APP_ID / ADMOB_BANNER_ID / ADMOB_OPEN_ID.
 val admobAppId: String =
     (project.findProperty("ADMOB_APP_ID") as String?)?.takeIf { it.isNotBlank() }
-        ?: "ca-app-pub-3940256099942544~3347511713"
+        ?: "ca-app-pub-7178658520690671~9313509461"
 val admobBannerId: String =
     (project.findProperty("ADMOB_BANNER_ID") as String?)?.takeIf { it.isNotBlank() }
-        ?: "ca-app-pub-3940256099942544/9214589741"
+        ?: "ca-app-pub-7178658520690671/3391806781"
 val admobOpenId: String =
     (project.findProperty("ADMOB_OPEN_ID") as String?)?.takeIf { it.isNotBlank() }
-        ?: "ca-app-pub-3940256099942544/9257395921"
+        ?: "ca-app-pub-7178658520690671/6010231268"
 
 val ksFile = project.findProperty("KEYSTORE_FILE") as String?
 val ksPassword = project.findProperty("KEYSTORE_PASSWORD") as String?

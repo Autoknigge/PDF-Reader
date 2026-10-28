@@ -10,7 +10,7 @@ Einfacher PDF-Betrachter im Stil der autoknigge.de-App-Familie (Tannengrün/Gold
 - Vorlesen: liest den Text ab der aktuellen Seite vor (deutsche Sprachausgabe) und blättert mit; Pause und Stopp. Scan-Seiten ohne Textschicht werden übersprungen
 - Passwortgeschützte PDFs: Abfrage des Passworts, dann normale Anzeige
 - Alles lokal; Arbeitskopien im App-Speicher werden nach einem Tag gelöscht
-- AdMob-Banner am Fuß, Google-Einwilligung (UMP), Hinweis beim ersten Start
+- AdMob-Banner am Fuß und App-Start-Anzeige, Google-Einwilligung (UMP), Hinweis beim ersten Start
 - Datenschutz: `https://autoknigge.de/pdfreader/datenschutz.html`
 
 ## Bewusst nicht in 1.0
@@ -18,4 +18,4 @@ Einfacher PDF-Betrachter im Stil der autoknigge.de-App-Familie (Tannengrün/Gold
 - Liste zuletzt geöffneter PDFs, Lesezeichen, Textsuche, Markierungen/Notizen
 - Fortlaufendes vertikales Scrollen (derzeit Seite für Seite)
 - Drucken, Teilen aus der Ansicht, Nachtmodus
-- App-Start-Anzeige (nur Banner)
+
