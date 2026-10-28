@@ -98,6 +98,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         Ui.underline(findViewById(R.id.tvAdSettings))
+        findViewById<TextView>(R.id.tvVersion).text =
+            "Version " + (packageManager.getPackageInfo(packageName, 0).versionName ?: "")
 
         adManager = AdManager(this, findViewById<FrameLayout>(R.id.adContainer), findViewById(R.id.tvAdSettings), true)
         Intro.run(this) {
