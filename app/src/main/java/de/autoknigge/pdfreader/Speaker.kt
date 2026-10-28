@@ -8,7 +8,9 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -29,6 +31,7 @@ class Speaker(
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private var doc: PDDocument? = null
+    @Volatile private var texts: List<String>? = null
     private var tts: TextToSpeech? = null
     private var ready = false
     private var startRequestedPage = -1
@@ -183,7 +186,8 @@ class Speaker(
     private fun speakCurrent() {
         val p = page
         worker.execute {
-            val text = extract(p)
+            val all = ensureTexts()
+            val text = all.getOrNull(p).orEmpty().replace(Regex("[ \\t]+"), " ").trim()
             main.post {
                 if (state != State.PLAYING || page != p) return@post
                 if (text.isBlank()) {
@@ -206,18 +210,47 @@ class Speaker(
         }
     }
 
-    private fun extract(p: Int): String {
-        return try {
-            val d = doc ?: PDDocument.load(file, MemoryUsageSetting.setupMixed(32L * 1024 * 1024)).also { doc = it }
-            val stripper = PDFTextStripper()
-            stripper.startPage = p + 1
-            stripper.endPage = p + 1
-            stripper.getText(d).replace(Regex("[ \\t]+"), " ").trim()
+    /**
+     * Liest den Text aller Seiten in EINEM Durchgang aus und ordnet ihn Seite für Seite zu
+     * (zuverlässiger als eine Einzelabfrage je Seite). Läuft nur einmal, auf dem Worker-Thread.
+     */
+    private fun ensureTexts(): List<String> {
+        texts?.let { return it }
+        val out = ArrayList<String>(pageCount)
+        try {
+            val d = doc ?: PDDocument.load(file, MemoryUsageSetting.setupMixed(48L * 1024 * 1024)).also { doc = it }
+            val stripper = object : PDFTextStripper() {
+                val sb = StringBuilder()
+                override fun startPage(page: PDPage) {
+                    sb.setLength(0)
+                }
+                override fun writeString(text: String, textPositions: MutableList<TextPosition>) {
+                    sb.append(text)
+                }
+                override fun writeLineSeparator() {
+                    sb.append('\n')
+                }
+                override fun writeWordSeparator() {
+                    sb.append(' ')
+                }
+                override fun endPage(page: PDPage) {
+                    out.add(sb.toString())
+                }
+            }
+            stripper.sortByPosition = true
+            stripper.startPage = 1
+            stripper.endPage = Int.MAX_VALUE
+            stripper.getText(d)
         } catch (e: Exception) {
-            ""
+            // Teilergebnis behalten
         } catch (e: OutOfMemoryError) {
-            ""
+            // Teilergebnis behalten
         }
+        // Auf die erwartete Seitenzahl auffüllen, falls die Auslese vorzeitig endete.
+        while (out.size < pageCount) out.add("")
+        val result: List<String> = out
+        texts = result
+        return result
     }
 
     /** Lange Seiten in Stücke unter der TTS-Grenze (~4000 Zeichen) teilen. */
