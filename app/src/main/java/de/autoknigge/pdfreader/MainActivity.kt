@@ -178,6 +178,7 @@ class MainActivity : AppCompatActivity() {
         adapter?.shutdown()
         val width = (resources.displayMetrics.widthPixels * 2).coerceAtMost(2200)
         val a = PageAdapter(src.file, width)
+        a.onLongPress = { page, fx, fy -> onPageLongPress(page, fx, fy) }
         adapter = a
         pager.adapter = a
         srcFile = src.file
@@ -200,7 +201,8 @@ class MainActivity : AppCompatActivity() {
         if (speaker == null) {
             speaker = Speaker(this, file, srcPages,
                 onState = { playing, page -> runOnUiThread { onSpeakState(playing, page) } },
-                onInfo = { msg -> runOnUiThread { toast(msg) } })
+                onInfo = { msg -> runOnUiThread { toast(msg) } },
+                onHighlight = { page, boxes -> runOnUiThread { adapter?.setHighlight(page, boxes) } })
         }
         return speaker
     }
@@ -260,6 +262,34 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Abbrechen", null)
             .show()
+    }
+
+    /** Lang auf eine Seitenstelle gedrückt: erkannten Absatz markieren und Auswahl anbieten. */
+    private fun onPageLongPress(page: Int, fx: Float, fy: Float) {
+        val s = ensureSpeaker() ?: return
+        s.locate(page, fx, fy) { loc ->
+            if (loc == null) {
+                toast("Hier wurde kein Text erkannt. Bei Bildern oder Scans ist kein Vorlesen möglich.")
+                return@locate
+            }
+            adapter?.setHighlight(page, loc.boxes)
+            AlertDialog.Builder(this)
+                .setTitle("Vorlesen")
+                .setItems(arrayOf("Ab hier vorlesen", "Nur diesen Absatz vorlesen", "Nur diese Seite vorlesen")) { _, which ->
+                    readBar.visibility = View.VISIBLE
+                    when (which) {
+                        0 -> s.startFrom(page, loc.block, Speaker.Scope.DOCUMENT, Int.MAX_VALUE)
+                        1 -> s.startFrom(page, loc.paraFirst, Speaker.Scope.PARAGRAPH, loc.paraLast)
+                        else -> s.startFrom(page, 0, Speaker.Scope.PAGE, Int.MAX_VALUE)
+                    }
+                }
+                .setNegativeButton("Abbrechen", null)
+                .setOnDismissListener {
+                    // Auswahl ohne Vorlesen: Markierung wieder entfernen.
+                    if (speaker?.state != Speaker.State.PLAYING) adapter?.setHighlight(-1, null)
+                }
+                .show()
+        }
     }
 
     private fun togglePause() {

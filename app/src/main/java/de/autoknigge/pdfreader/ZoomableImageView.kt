@@ -1,20 +1,22 @@
 package de.autoknigge.pdfreader
 
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import androidx.appcompat.widget.AppCompatImageView
-import kotlin.math.max
 import kotlin.math.min
 
 /**
  * Eine Seite im Lesebildschirm: Doppeltippen zoomt, zwei Finger ziehen zoomt stufenlos,
  * ein Finger verschiebt im gezoomten Zustand. Ohne Zoom gibt die Ansicht das Wischen an
- * den seitlichen Seitenwechsel weiter.
+ * den seitlichen Seitenwechsel weiter. Langes Drücken meldet die Stelle als Seitenbruchteil;
+ * [highlight] zeichnet die gerade gelesene Stelle farbig auf die Seite.
  */
 class ZoomableImageView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
@@ -26,6 +28,27 @@ class ZoomableImageView @JvmOverloads constructor(
     private var minScale = 1f
     private val maxScale = 5f
     private var fitted = false
+
+    /** Meldet langes Drücken: Seitenbruchteile x, y (0 … 1). */
+    var onLongPressFraction: ((Float, Float) -> Unit)? = null
+
+    /** Zu markierende Rechtecke als Seitenbruchteile; null = keine Markierung. */
+    var highlight: List<Box>? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x66FFC400
+        style = Paint.Style.FILL
+    }
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xCCE09A00.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+    }
+    private val rect = RectF()
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(d: ScaleGestureDetector): Boolean {
@@ -54,6 +77,22 @@ class ZoomableImageView @JvmOverloads constructor(
             clampAndApply()
             return true
         }
+
+        override fun onLongPress(e: MotionEvent) {
+            val d = drawable ?: return
+            val iw = d.intrinsicWidth.toFloat()
+            val ih = d.intrinsicHeight.toFloat()
+            if (iw <= 0f || ih <= 0f) return
+            val inverse = Matrix()
+            if (!drawMatrix.invert(inverse)) return
+            val pt = floatArrayOf(e.x, e.y)
+            inverse.mapPoints(pt)
+            val fx = pt[0] / iw
+            val fy = pt[1] / ih
+            if (fx < 0f || fx > 1f || fy < 0f || fy > 1f) return
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            onLongPressFraction?.invoke(fx, fy)
+        }
     })
 
     init {
@@ -74,6 +113,27 @@ class ZoomableImageView @JvmOverloads constructor(
         if (bm != null) post { fitToView() }
     }
 
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val boxes = highlight ?: return
+        val d = drawable ?: return
+        if (boxes.isEmpty()) return
+        val iw = d.intrinsicWidth.toFloat()
+        val ih = d.intrinsicHeight.toFloat()
+        canvas.save()
+        canvas.concat(drawMatrix)
+        // Strichstärke unabhängig vom Zoom halten.
+        linePaint.strokeWidth = 2f / currentScaleAbs().coerceAtLeast(0.01f)
+        for (b in boxes) {
+            rect.set(b.l * iw, b.t * ih, b.r * iw, b.b * ih)
+            val pad = 2f / currentScaleAbs().coerceAtLeast(0.01f) * 2f
+            rect.inset(-pad, -pad)
+            canvas.drawRoundRect(rect, pad * 2f, pad * 2f, fillPaint)
+            canvas.drawRoundRect(rect, pad * 2f, pad * 2f, linePaint)
+        }
+        canvas.restore()
+    }
+
     private fun fitToView() {
         val d = drawable ?: return
         val vw = width.toFloat(); val vh = height.toFloat()
@@ -90,12 +150,19 @@ class ZoomableImageView @JvmOverloads constructor(
         fitted = true
     }
 
+    /** Zoom relativ zur Grundansicht (1 = ganze Seite sichtbar). */
     private fun currentScale(): Float {
         drawMatrix.getValues(matrixValues)
         val sx = matrixValues[Matrix.MSCALE_X]
         baseMatrix.getValues(matrixValues)
         val base = matrixValues[Matrix.MSCALE_X]
         return if (base != 0f) sx / base else 1f
+    }
+
+    /** Absoluter Maßstab Bildpunkt -> Bildschirmpunkt. */
+    private fun currentScaleAbs(): Float {
+        drawMatrix.getValues(matrixValues)
+        return matrixValues[Matrix.MSCALE_X]
     }
 
     private fun imageRect(): RectF {

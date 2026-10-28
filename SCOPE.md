@@ -7,7 +7,9 @@ Einfacher PDF-Betrachter im Stil der autoknigge.de-App-Familie (Tannengrün/Gold
 - Blättern Seite für Seite durch Wischen
 - Zoomen mit zwei Fingern oder Doppeltippen, Verschieben mit einem Finger
 - Seitenanzeige „3 / 20“, Tippen springt zu einer Seite
-- Vorlesen: liest den Text ab der aktuellen Seite vor (deutsche Sprachausgabe) und blättert mit; Pause und Stopp. Scan-Seiten ohne Textschicht werden übersprungen
+- Vorlesen: liest den Text ab der aktuellen Seite vor (deutsche Sprachausgabe) und blättert mit; Pause und Stopp; Geschwindigkeit und Stimme einstellbar. Scan-Seiten ohne Textschicht werden übersprungen und gemeldet
+- Auswahl: lang auf eine Stelle der Seite drücken → „Ab hier“, „Nur diesen Absatz“ oder „Nur diese Seite“ vorlesen
+- Die gerade gelesene Stelle wird auf der Seite farbig markiert
 - Passwortgeschützte PDFs: Abfrage des Passworts, dann normale Anzeige
 - Alles lokal; Arbeitskopien im App-Speicher werden nach einem Tag gelöscht
 - AdMob-Banner am Fuß und App-Start-Anzeige, Google-Einwilligung (UMP), Hinweis beim ersten Start
