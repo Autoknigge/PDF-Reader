@@ -143,13 +143,27 @@ class Speaker(
 
     fun isReady(): Boolean = ready
 
-    /** Deutsche Stimmen des Geräts (leer, falls keine installiert). */
+    /**
+     * Bis zu 6 deutsche Stimmen des Geräts, die ohne Internet laufen (der Text verlässt das Gerät nicht):
+     * zuerst Deutschland, dann nach Qualität. Nicht installierte Stimmen werden ausgelassen.
+     */
     fun germanVoices(): List<Voice> = try {
         tts?.voices.orEmpty()
-            .filter { it.locale.language == "de" && !it.isNetworkConnectionRequired }
-            .sortedBy { it.name }
+            .filter {
+                it.locale.language == "de" && !it.isNetworkConnectionRequired &&
+                    !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+            }
+            .sortedWith(
+                compareBy<Voice>({ if (it.locale.country == "DE") 0 else 1 }, { -it.quality }, { it.name })
+            )
+            .take(6)
     } catch (e: Exception) {
         emptyList()
+    }
+
+    /** Spielt einen kurzen Probesatz mit der gewählten Stimme ab. */
+    fun preview() {
+        tts?.speak("Hallo, so klingt diese Stimme beim Vorlesen.", TextToSpeech.QUEUE_FLUSH, null, "preview")
     }
 
     fun currentVoiceName(): String? = try {

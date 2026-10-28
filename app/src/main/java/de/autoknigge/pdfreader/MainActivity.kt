@@ -248,19 +248,31 @@ class MainActivity : AppCompatActivity() {
             toast("Keine deutsche Stimme gefunden. Du kannst in den Android-Einstellungen unter „Sprachausgabe“ eine installieren.")
             return
         }
+        // Während der Auswahl nicht weiterlesen, damit man die Proben hört.
+        val wasPlaying = s.state == Speaker.State.PLAYING
+        if (wasPlaying) s.pause()
         val labels = voices.mapIndexed { i, v ->
-            val land = v.locale.country.ifBlank { "" }
-            "Stimme ${i + 1}" + if (land.isNotBlank()) " ($land)" else ""
-        }.toTypedArray()
-        val currentName = s.currentVoiceName()
-        val current = voices.indexOfFirst { it.name == currentName }
-        AlertDialog.Builder(this)
-            .setTitle("Stimme")
-            .setSingleChoiceItems(labels, current) { d, which ->
-                s.setVoice(voices[which].name)
-                d.dismiss()
+            val quality = when {
+                v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> " · sehr gut"
+                v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> " · gut"
+                else -> ""
             }
-            .setNegativeButton("Abbrechen", null)
+            val land = when (v.locale.country) {
+                "AT" -> " (Österreich)"
+                "CH" -> " (Schweiz)"
+                else -> ""
+            }
+            "Stimme ${i + 1}$quality$land"
+        }.toTypedArray()
+        val current = voices.indexOfFirst { it.name == s.currentVoiceName() }
+        AlertDialog.Builder(this)
+            .setTitle("Stimme – antippen zum Anhören")
+            .setSingleChoiceItems(labels, current) { _, which ->
+                s.setVoice(voices[which].name)
+                s.preview()
+            }
+            .setPositiveButton("Fertig", null)
+            .setOnDismissListener { if (wasPlaying) s.resume() }
             .show()
     }
 
