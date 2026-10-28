@@ -163,7 +163,10 @@ class Speaker(
      * entfallen; nach dem Hörtest steht die zuletzt gelistete Stimme vorn.
      */
     fun germanVoices(): List<Voice> {
-        val list = voiceCandidates().filterNot { it.name.endsWith("-language", ignoreCase = true) }.take(6)
+        val list = voiceCandidates()
+            .filterNot { it.name.endsWith("-language", ignoreCase = true) }
+            .distinctBy { it.name.substringBefore('#').lowercase() }
+            .take(6)
         return if (list.size > 1) listOf(list.last()) + list.dropLast(1) else list
     }
 
