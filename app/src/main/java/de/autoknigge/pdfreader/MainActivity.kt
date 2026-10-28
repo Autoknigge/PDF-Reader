@@ -338,7 +338,7 @@ class MainActivity : AppCompatActivity() {
         }.toTypedArray()
         val current = voices.indexOfFirst { it.name == s.currentVoiceName() }
         AlertDialog.Builder(this)
-            .setTitle("Stimme – antippen zum Anhören")
+            .setTitle("Stimme (${voices.size} von ${s.germanVoiceTotal()}) – antippen zum Anhören")
             .setSingleChoiceItems(labels, current) { _, which ->
                 s.setVoice(voices[which].name)
                 s.preview()

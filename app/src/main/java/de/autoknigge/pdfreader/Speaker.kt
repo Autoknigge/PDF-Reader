@@ -143,14 +143,9 @@ class Speaker(
 
     fun isReady(): Boolean = ready
 
-    /**
-     * Bis zu 6 deutsche Stimmen des Geräts, die ohne Internet laufen (der Text verlässt das Gerät nicht):
-     * zuerst Deutschland, dann nach Qualität. Nicht installierte Stimmen werden ausgelassen.
-     * Verweis-Einträge wie „de-DE-language“ (nur ein Zeiger auf die Standardstimme, klingt wie eine andere)
-     * entfallen; nach dem Hörtest steht die zuletzt gelistete Stimme vorn.
-     */
-    fun germanVoices(): List<Voice> = try {
-        val list = tts?.voices.orEmpty()
+    /** Alle in Frage kommenden deutschen Offline-Stimmen, sortiert (Deutschland zuerst, dann Qualität). */
+    private fun voiceCandidates(): List<Voice> = try {
+        tts?.voices.orEmpty()
             .filter {
                 it.locale.language == "de" && !it.isNetworkConnectionRequired &&
                     !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
@@ -158,11 +153,21 @@ class Speaker(
             .sortedWith(
                 compareBy<Voice>({ if (it.locale.country == "DE") 0 else 1 }, { -it.quality }, { it.name })
             )
-            .take(6)
-            .filterNot { it.name.endsWith("-language", ignoreCase = true) }
-        if (list.size > 1) listOf(list.last()) + list.dropLast(1) else list
     } catch (e: Exception) {
         emptyList()
+    }
+
+    /** Anzahl aller deutschen Offline-Stimmen, die das Gerät meldet (vor der Kürzung auf 6). */
+    fun germanVoiceTotal(): Int = voiceCandidates().size
+
+    /**
+     * Bis zu 6 deutsche Stimmen des Geräts, die ohne Internet laufen (der Text verlässt das Gerät nicht).
+     * Verweis-Einträge wie „de-DE-language“ (nur ein Zeiger auf die Standardstimme, klingt wie eine andere)
+     * entfallen; nach dem Hörtest steht die zuletzt gelistete Stimme vorn.
+     */
+    fun germanVoices(): List<Voice> {
+        val list = voiceCandidates().take(6).filterNot { it.name.endsWith("-language", ignoreCase = true) }
+        return if (list.size > 1) listOf(list.last()) + list.dropLast(1) else list
     }
 
     /** Spielt einen kurzen Probesatz mit der gewählten Stimme ab. */
