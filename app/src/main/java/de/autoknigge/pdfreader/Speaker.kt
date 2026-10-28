@@ -32,6 +32,8 @@ class Speaker(
     private val worker = Executors.newSingleThreadExecutor()
     private var doc: PDDocument? = null
     @Volatile private var texts: List<String>? = null
+    private var skipStart = -1
+    private var skipEnd = -1
     private var tts: TextToSpeech? = null
     private var ready = false
     private var startRequestedPage = -1
@@ -59,7 +61,10 @@ class Speaker(
                 applySavedVoice()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
-                    override fun onError(id: String?) {}
+                    override fun onError(id: String?) {
+                        // Fehler der Sprachausgabe bei einem Stück: nicht hängen bleiben, weiter zur nächsten Seite.
+                        if (id != null && !id.endsWith("_flush")) main.post { nextPage() }
+                    }
                     override fun onDone(id: String?) {
                         if (id != null && id.endsWith("_last")) main.post { nextPage() }
                     }
@@ -171,9 +176,23 @@ class Speaker(
         }
     }
 
+    /** Meldet übersprungene Seiten ohne Text, damit nichts stillschweigend fehlt. */
+    private fun reportSkipped() {
+        if (skipStart < 0) return
+        val a = skipStart + 1
+        val b = skipEnd + 1
+        skipStart = -1
+        skipEnd = -1
+        onInfo(
+            if (a == b) "Seite $a enthält keinen lesbaren Text und wurde übersprungen."
+            else "Seiten $a–$b enthalten keinen lesbaren Text (vermutlich Bilder oder Scans) und wurden übersprungen."
+        )
+    }
+
     private fun nextPage() {
         if (state != State.PLAYING) return
         if (page + 1 >= pageCount) {
+            reportSkipped()
             onInfo("Ende des Dokuments.")
             stop()
             return
@@ -191,10 +210,13 @@ class Speaker(
             main.post {
                 if (state != State.PLAYING || page != p) return@post
                 if (text.isBlank()) {
-                    // Seite ohne Text (z. B. Scan): weiter zur nächsten.
+                    // Seite ohne Text (z. B. Scan): merken und weiter zur nächsten.
+                    if (skipStart < 0) skipStart = p
+                    skipEnd = p
                     nextPage()
                     return@post
                 }
+                reportSkipped()
                 enqueue(p, text)
             }
         }
