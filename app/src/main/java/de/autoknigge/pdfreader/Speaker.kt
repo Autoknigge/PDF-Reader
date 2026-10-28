@@ -206,7 +206,7 @@ class Speaker(
         val p = page
         worker.execute {
             val all = ensureTexts()
-            val text = all.getOrNull(p).orEmpty().replace(Regex("[ \\t]+"), " ").trim()
+            val text = clean(all.getOrNull(p).orEmpty())
             main.post {
                 if (state != State.PLAYING || page != p) return@post
                 if (text.isBlank()) {
@@ -275,19 +275,72 @@ class Speaker(
         return result
     }
 
-    /** Lange Seiten in Stücke unter der TTS-Grenze (~4000 Zeichen) teilen. */
-    private fun chunk(text: String): List<String> {
-        val max = TextToSpeech.getMaxSpeechInputLength().coerceAtMost(3500)
-        if (text.length <= max) return listOf(text)
-        val out = ArrayList<String>()
-        var rest = text
-        while (rest.length > max) {
-            var cut = rest.lastIndexOf('.', max).coerceAtLeast(rest.lastIndexOf(' ', max))
-            if (cut < max / 2) cut = max
-            out.add(rest.substring(0, cut + 1).trim())
-            rest = rest.substring(cut + 1)
+    /**
+     * Macht den Seitentext vorlesbar: Symbolschrift-Zeichen (Aufzählungspunkte aus Wingdings u. Ä.,
+     * liegen im Unicode-Privatbereich) entfernen, Zeilenumbrüche innerhalb eines Satzes glätten und
+     * kurze Zeilen ohne Satzzeichen (Überschriften) mit einem Punkt abschließen, damit eine Pause entsteht.
+     */
+    private fun clean(raw: String): String {
+        val noSymbols = raw
+            .replace(Regex("[\\uE000-\\uF8FF\\u25CF\\u25A0\\u2022\\u00B7\\u2023\\u2043]"), " ")
+            .replace(Regex("[\\u00AD\\u200B]"), "")
+        val lines = noSymbols.split('\n').map { it.replace(Regex("[ \\t]+"), " ").trim() }
+        val sb = StringBuilder()
+        for (i in lines.indices) {
+            val line = lines[i]
+            if (line.isEmpty()) {
+                if (sb.isNotEmpty() && !sb.endsWith("\n")) sb.append('\n')
+                continue
+            }
+            sb.append(line)
+            val last = line.last()
+            val endsSentence = last in ".!?:;"
+            val isListItem = last == ','
+            // Kurze Zeile ohne Satzzeichen (Überschrift): mit Punkt abschließen, damit eine Pause entsteht.
+            val isHeading = !endsSentence && !isListItem && last.isLetterOrDigit() && line.length < 48
+            val nextBlank = i + 1 >= lines.size || lines[i + 1].isEmpty()
+            when {
+                isHeading -> sb.append(".\n")
+                endsSentence || isListItem || nextBlank -> sb.append('\n')
+                else -> sb.append(' ')
+            }
         }
-        if (rest.isNotBlank()) out.add(rest.trim())
+        return sb.toString().replace(Regex("\\n{2,}"), "\n").trim()
+    }
+
+    /** Teilt den Text in kurze Stücke (um 400 Zeichen) an Satz- und Absatzgrenzen. */
+    private fun chunk(text: String): List<String> {
+        val max = 400
+        val limit = TextToSpeech.getMaxSpeechInputLength().coerceAtMost(3500)
+        // Nicht nach Abkürzungen („Nr.“, „z. B.“, „Abs.“ …), einzelnen Buchstaben und Ziffern („1.“) trennen.
+        val splitter = Regex(
+            "(?<=[.!?:;])(?<!\\bNr\\.)(?<!\\bAbs\\.)(?<!\\bArt\\.)(?<!\\bbzw\\.)(?<!\\bca\\.)(?<!\\busw\\.)" +
+                "(?<!\\bvgl\\.)(?<!\\bDr\\.)(?<!\\bTel\\.)(?<!\\bStr\\.)(?<!\\bggf\\.)(?<!\\bevtl\\.)" +
+                "(?<!\\b\\p{L}\\.)(?<!\\d\\.)\\s+"
+        )
+        val sentences = text.split('\n').flatMap { para ->
+            para.split(splitter).filter { it.isNotBlank() }
+        }
+        val out = ArrayList<String>()
+        val cur = StringBuilder()
+        fun flush() {
+            if (cur.isNotBlank()) out.add(cur.toString().trim())
+            cur.setLength(0)
+        }
+        for (s in sentences) {
+            var sentence = s
+            // Sehr lange Sätze notfalls an Leerzeichen teilen.
+            while (sentence.length > limit.coerceAtMost(900)) {
+                val cut = sentence.lastIndexOf(' ', 800).takeIf { it > 200 } ?: 800
+                if (cur.isNotEmpty()) flush()
+                out.add(sentence.substring(0, cut).trim())
+                sentence = sentence.substring(cut).trim()
+            }
+            if (cur.isNotEmpty() && cur.length + 1 + sentence.length > max) flush()
+            if (cur.isNotEmpty()) cur.append(' ')
+            cur.append(sentence)
+        }
+        flush()
         return out
     }
 
