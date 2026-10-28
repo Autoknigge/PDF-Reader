@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="icon_hintergrund">#03170A</color>
     <color name="tanne">#1A2C20</color>
     <color name="tanne_dunkel">#0F1B14</color>
     <color name="tanne_hell">#243A2C</color>
