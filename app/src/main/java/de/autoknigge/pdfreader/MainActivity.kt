@@ -16,6 +16,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
 import androidx.viewpager2.widget.ViewPager2
+import java.io.File
 import java.util.concurrent.Executors
 
 /** Einfacher PDF-Betrachter: öffnen, blättern, zoomen. */
@@ -38,6 +39,13 @@ class MainActivity : AppCompatActivity() {
     private var loading = false
     private var currentTitle = ""
 
+    private lateinit var readBar: View
+    private lateinit var tvReadStatus: TextView
+    private lateinit var btnPlayPause: TextView
+    private var speaker: Speaker? = null
+    private var srcFile: File? = null
+    private var srcPages = 0
+
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
@@ -59,13 +67,21 @@ class MainActivity : AppCompatActivity() {
         tvTitle = findViewById(R.id.tvTitle)
         tvPage = findViewById(R.id.tvPage)
 
+        readBar = findViewById(R.id.readBar)
+        tvReadStatus = findViewById(R.id.tvReadStatus)
+        btnPlayPause = findViewById(R.id.btnPlayPause)
+
         findViewById<View>(R.id.btnBack).setOnClickListener { goBack() }
         findViewById<View>(R.id.btnOpen).setOnClickListener { pick() }
         findViewById<View>(R.id.btnOpenBig).setOnClickListener { pick() }
+        findViewById<View>(R.id.btnSpeak).setOnClickListener { startSpeaking() }
+        btnPlayPause.setOnClickListener { togglePause() }
+        findViewById<View>(R.id.btnStopRead).setOnClickListener { speaker?.stop() }
 
         pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 updatePageLabel()
+                speaker?.moveTo(position)
             }
         })
         tvPage.setOnClickListener { jumpToPage() }
@@ -111,12 +127,16 @@ class MainActivity : AppCompatActivity() {
     /** Zurück: zuerst vom geöffneten Dokument zum Startbildschirm, dann die App schließen. */
     private fun goBack() {
         if (pager.visibility == View.VISIBLE) {
+            releaseSpeaker()
             pager.adapter = null
             adapter?.shutdown()
             adapter = null
+            srcFile = null
+            srcPages = 0
             currentTitle = ""
             pager.visibility = View.GONE
             tvPage.visibility = View.GONE
+            findViewById<View>(R.id.btnSpeak).visibility = View.GONE
             empty.visibility = View.VISIBLE
             tvTitle.text = getString(R.string.app_name)
         } else {
@@ -152,17 +172,57 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun show(src: PdfSource) {
+        releaseSpeaker()
         adapter?.shutdown()
         val width = (resources.displayMetrics.widthPixels * 2).coerceAtMost(2200)
         val a = PageAdapter(src.file, width)
         adapter = a
         pager.adapter = a
+        srcFile = src.file
+        srcPages = src.pages
         empty.visibility = View.GONE
         pager.visibility = View.VISIBLE
+        findViewById<View>(R.id.btnSpeak).visibility = View.VISIBLE
         tvPage.visibility = if (src.pages > 1) View.VISIBLE else View.GONE
         currentTitle = src.name
         tvTitle.text = src.name
         updatePageLabel()
+    }
+
+    // ---------- Vorlesen ----------
+
+    private fun startSpeaking() {
+        val file = srcFile ?: return
+        if (speaker == null) {
+            speaker = Speaker(this, file, srcPages,
+                onState = { playing, page -> runOnUiThread { onSpeakState(playing, page) } },
+                onInfo = { msg -> runOnUiThread { toast(msg) } })
+        }
+        readBar.visibility = View.VISIBLE
+        speaker?.start(pager.currentItem)
+    }
+
+    private fun togglePause() {
+        val s = speaker ?: return
+        if (s.state == Speaker.State.PLAYING) s.pause() else s.resume()
+    }
+
+    private fun onSpeakState(playing: Boolean, page: Int) {
+        val s = speaker
+        if (playing && page != pager.currentItem) pager.setCurrentItem(page, false)
+        btnPlayPause.text = if (playing) "⏸" else "▶"
+        btnPlayPause.contentDescription = if (playing) "Pause" else "Weiter"
+        when (s?.state) {
+            Speaker.State.PLAYING -> tvReadStatus.text = "Seite ${page + 1} wird vorgelesen"
+            Speaker.State.PAUSED -> tvReadStatus.text = "Pause – Seite ${page + 1}"
+            else -> readBar.visibility = View.GONE
+        }
+    }
+
+    private fun releaseSpeaker() {
+        speaker?.release()
+        speaker = null
+        readBar.visibility = View.GONE
     }
 
     private fun updatePageLabel() {
@@ -221,6 +281,7 @@ class MainActivity : AppCompatActivity() {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show()
 
     override fun onPause() {
+        speaker?.pause()
         adManager.pause()
         super.onPause()
     }
@@ -233,6 +294,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        releaseSpeaker()
         adManager.destroy()
         adapter?.shutdown()
         worker.shutdown()

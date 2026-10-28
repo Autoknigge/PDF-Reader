@@ -1,6 +1,6 @@
 # PDF-Reader
 
-Android-App: PDFs öffnen, blättern und zoomen – einfach und schnell. Öffnet auch passwortgeschützte PDFs (Passwortabfrage) und erscheint im System unter „Öffnen mit“, wenn man eine PDF antippt. Gratis mit AdMob-Banner. Alles läuft lokal auf dem Gerät.
+Android-App: PDFs öffnen, blättern, zoomen und vorlesen lassen – einfach und schnell. Öffnet auch passwortgeschützte PDFs (Passwortabfrage) und erscheint im System unter „Öffnen mit“, wenn man eine PDF antippt. Gratis mit AdMob-Banner. Alles läuft lokal auf dem Gerät.
 
 Paketname: `de.autoknigge.pdfreader` – nach der Veröffentlichung im Play Store nicht mehr änderbar.
 

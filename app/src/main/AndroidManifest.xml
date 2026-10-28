@@ -6,6 +6,13 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
+    <!-- Sichtbarkeit der Sprachausgabe (Vorlesen) ab Android 11 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="false"
