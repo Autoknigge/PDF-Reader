@@ -1,0 +1,86 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+      ADMOB_BANNER_ID: ${{ secrets.ADMOB_BANNER_ID }}
+      ADMOB_OPEN_ID: ${{ secrets.ADMOB_OPEN_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # ganze Historie: die Versionsnummer zählt die Commits
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Debug-APK bauen (Testversion zum Installieren)
+        run: >
+          gradle assembleDebug --no-daemon
+          -PADMOB_APP_ID="$ADMOB_APP_ID"
+          -PADMOB_BANNER_ID="$ADMOB_BANNER_ID"
+          -PADMOB_OPEN_ID="$ADMOB_OPEN_ID"
+
+      - name: Debug-APK umbenennen
+        run: cp app/build/outputs/apk/debug/app-debug.apk PdfReader.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PdfReader
+          path: PdfReader.apk
+
+      - name: Keystore bereitstellen
+        if: env.HAS_KEYSTORE == 'true'
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: Signierte Release-APK und AAB bauen
+        if: env.HAS_KEYSTORE == 'true'
+        run: >
+          gradle assembleRelease bundleRelease --no-daemon
+          -PADMOB_APP_ID="$ADMOB_APP_ID"
+          -PADMOB_BANNER_ID="$ADMOB_BANNER_ID"
+          -PADMOB_OPEN_ID="$ADMOB_OPEN_ID"
+          -PKEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          -PKEYSTORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}"
+          -PKEY_ALIAS="${{ secrets.KEY_ALIAS }}"
+          -PKEY_PASSWORD="${{ secrets.KEY_PASSWORD }}"
+
+      - name: Release-Dateien umbenennen
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk PdfReader-signiert.apk
+          cp app/build/outputs/bundle/release/app-release.aab PdfReader.aab
+
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_KEYSTORE == 'true'
+        with:
+          name: PdfReader-signiert
+          path: |
+            PdfReader-signiert.apk
+            PdfReader.aab
+
+      - name: GitHub-Release (bei Tag, z. B. 1.0)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            PdfReader.apk
+            PdfReader-signiert.apk
+            PdfReader.aab
+          fail_on_unmatched_files: false

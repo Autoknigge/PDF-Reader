@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_box_dark"
+        android:orientation="vertical"
+        android:padding="22dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="Kostenlos dank Werbung"
+            android:textColor="@color/gold"
+            android:textSize="21sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="Diese App ist kostenlos und finanziert sich durch Werbung."
+            android:textColor="@color/text_hell"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Aktuell gibt es ein Werbebanner am unteren Bildschirmrand."
+            android:textColor="@color/text_hell"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Ich würde mich freuen, wenn du im nächsten Schritt der Nutzung deiner Daten für Werbezwecke zustimmst und damit die kostenlose Bereitstellung der App unterstützt."
+            android:textColor="@color/text_hell"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Deine Auswahl kannst du jederzeit unter „Werbe-Einstellungen“ ändern."
+            android:textColor="@color/text_hell"
+            android:textSize="16sp" />
+
+        <LinearLayout
+            android:id="@+id/btnIntroOk"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/bg_btn_gold"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minHeight="56dp"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Weiter"
+                android:textColor="@color/auf_gold"
+                android:textSize="19sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

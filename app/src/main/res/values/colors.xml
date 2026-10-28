@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tanne">#1A2C20</color>
+    <color name="tanne_dunkel">#0F1B14</color>
+    <color name="tanne_hell">#243A2C</color>
+    <color name="gold">#D4AF37</color>
+    <color name="gold_dunkel">#A8841F</color>
+    <color name="ocker">#C8912E</color>
+    <color name="erdrot">#A63D2F</color>
+    <color name="braun">#6B4A2F</color>
+    <color name="text_hell">#F8E7A4</color>
+    <color name="text_gedimmt">#CFC38E</color>
+    <color name="auf_gold">#1B3A2B</color>
+    <color name="auf_gold_sub">#2E4E3B</color>
+</resources>

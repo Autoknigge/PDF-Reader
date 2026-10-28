@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PdfReader" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@drawable/bg_screen</item>
+        <item name="android:textColor">@color/text_hell</item>
+        <item name="colorAccent">@color/gold</item>
+        <item name="colorPrimary">@color/tanne</item>
+        <item name="colorPrimaryDark">@color/tanne_dunkel</item>
+        <item name="android:statusBarColor">@color/tanne</item>
+        <item name="android:navigationBarColor">@color/tanne_dunkel</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="ItemAction">
+        <item name="android:layout_width">44dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/gold</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:background">?android:attr/selectableItemBackgroundBorderless</item>
+    </style>
+</resources>
