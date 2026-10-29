@@ -1,6 +1,8 @@
 package de.autoknigge.pdfreader
 
 import android.graphics.Bitmap
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
@@ -31,6 +33,16 @@ class PageAdapter(file: File, private val renderWidth: Int) : RecyclerView.Adapt
     private var recycler: RecyclerView? = null
     private var hlPage = -1
     private var hlBoxes: List<Box>? = null
+
+    /** Anzeige: 0 hell, 1 dunkel (Farben umgekehrt), 2 Lesemodus (warmes Papier, weniger Blau). */
+    var mode = 0
+        set(value) {
+            field = value
+            val rv = recycler ?: return
+            for (i in 0 until rv.childCount) {
+                (rv.getChildViewHolder(rv.getChildAt(i)) as? VH)?.image?.colorFilter = filterFor(value)
+            }
+        }
 
     class VH(v: View) : RecyclerView.ViewHolder(v) {
         val image: ZoomableImageView = v.findViewById(R.id.ivPage)
@@ -64,6 +76,7 @@ class PageAdapter(file: File, private val renderWidth: Int) : RecyclerView.Adapt
     }
 
     override fun onBindViewHolder(h: VH, position: Int) {
+        h.image.colorFilter = filterFor(mode)
         h.image.resetZoom()
         h.image.setImageBitmap(null)
         h.image.tag = position
@@ -106,5 +119,31 @@ class PageAdapter(file: File, private val renderWidth: Int) : RecyclerView.Adapt
             }
         }
         worker.shutdown()
+    }
+
+    companion object {
+        fun filterFor(mode: Int): ColorMatrixColorFilter? = when (mode) {
+            1 -> ColorMatrixColorFilter(
+                ColorMatrix(
+                    floatArrayOf(
+                        -0.88f, 0f, 0f, 0f, 235f,
+                        0f, -0.88f, 0f, 0f, 235f,
+                        0f, 0f, -0.88f, 0f, 235f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+            2 -> ColorMatrixColorFilter(
+                ColorMatrix(
+                    floatArrayOf(
+                        0.97f, 0f, 0f, 0f, 0f,
+                        0f, 0.88f, 0f, 0f, 0f,
+                        0f, 0f, 0.62f, 0f, 0f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+            else -> null
+        }
     }
 }

@@ -42,6 +42,8 @@ class MainActivity : AppCompatActivity() {
     private var currentTitle = ""
 
     private lateinit var readBar: View
+    private lateinit var btnTheme: TextView
+    private var viewMode = 0
     private lateinit var tvReadStatus: TextView
     private lateinit var btnPlayPause: TextView
     private var speaker: Speaker? = null
@@ -95,6 +97,8 @@ class MainActivity : AppCompatActivity() {
             }
         })
         tvPage.setOnClickListener { jumpToPage() }
+        btnTheme = findViewById(R.id.btnTheme)
+        btnTheme.setOnClickListener { setViewMode((viewMode + 1) % 3) }
 
         mapOf(
             R.id.tvAbout to URL_HOME,
@@ -150,6 +154,7 @@ class MainActivity : AppCompatActivity() {
             currentTitle = ""
             pager.visibility = View.GONE
             tvPage.visibility = View.GONE
+            btnTheme.visibility = View.GONE
             findViewById<View>(R.id.btnSpeak).visibility = View.GONE
             findViewById<View>(R.id.btnReadSettings).visibility = View.GONE
             empty.visibility = View.VISIBLE
@@ -186,11 +191,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun setViewMode(mode: Int) {
+        viewMode = mode
+        getSharedPreferences("pdfreader", MODE_PRIVATE).edit().putInt("view_mode", mode).apply()
+        adapter?.mode = mode
+        applyViewMode()
+    }
+
+    private fun applyViewMode() {
+        btnTheme.text = when (viewMode) {
+            1 -> "🌙  Dunkel"
+            2 -> "📖  Lesemodus"
+            else -> "☀  Hell"
+        }
+        pager.setBackgroundColor(
+            when (viewMode) {
+                1 -> 0xFF0B0B0B.toInt()
+                2 -> 0xFF2A2118.toInt()
+                else -> 0x00000000
+            }
+        )
+    }
+
     private fun show(src: PdfSource) {
         releaseSpeaker()
         adapter?.shutdown()
         val width = (resources.displayMetrics.widthPixels * 2).coerceAtMost(2200)
         val a = PageAdapter(src.file, width)
+        viewMode = getSharedPreferences("pdfreader", MODE_PRIVATE).getInt("view_mode", 0)
+        a.mode = viewMode
         a.onLongPress = { page, fx, fy -> onPageLongPress(page, fx, fy) }
         adapter = a
         pager.adapter = a
@@ -204,6 +233,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnReadSettings).visibility = View.VISIBLE
         ensureSpeaker()
         tvPage.visibility = if (src.pages > 1) View.VISIBLE else View.GONE
+        btnTheme.visibility = View.VISIBLE
+        applyViewMode()
         currentTitle = src.name
         tvTitle.text = src.name
         updatePageLabel()

@@ -105,6 +105,23 @@
             android:textSize="14sp"
             android:visibility="gone" />
 
+        <TextView
+            android:id="@+id/btnTheme"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_pagepill"
+            android:contentDescription="Anzeige: hell, dunkel oder Lesemodus"
+            android:paddingStart="16dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="6dp"
+            android:textColor="@color/text_hell"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <ScrollView
             android:id="@+id/empty"
             android:layout_width="match_parent"
