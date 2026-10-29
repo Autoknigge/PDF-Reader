@@ -291,6 +291,7 @@ class MainActivity : AppCompatActivity() {
         }
         list.adapter = adapter
         list.setOnItemClickListener { _, _, which, _ ->
+            onPick(which)
             if (keepOpen) {
                 sel = which
                 adapter.notifyDataSetChanged()
@@ -299,7 +300,6 @@ class MainActivity : AppCompatActivity() {
                 dialog.dismiss()
                 onDismiss?.invoke()
             }
-            onPick(which)
         }
         val titleView = TextView(this).apply {
             text = title
