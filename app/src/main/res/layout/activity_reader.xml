@@ -264,6 +264,17 @@
                     android:text="Eine Idee von autoknigge.de"
                     android:textColor="@color/gold"
                     android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/tvMoreApps"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:gravity="center"
+                    android:padding="6dp"
+                    android:text="Weitere Apps von autoknigge.de"
+                    android:textColor="@color/gold"
+                    android:textSize="13sp" />
             </LinearLayout>
         </ScrollView>
     </FrameLayout>
