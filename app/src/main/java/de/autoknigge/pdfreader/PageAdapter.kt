@@ -136,9 +136,9 @@ class PageAdapter(file: File, private val renderWidth: Int) : RecyclerView.Adapt
             2 -> ColorMatrixColorFilter(
                 ColorMatrix(
                     floatArrayOf(
-                        0.97f, 0f, 0f, 0f, 0f,
-                        0f, 0.88f, 0f, 0f, 0f,
-                        0f, 0f, 0.62f, 0f, 0f,
+                        1f, 0f, 0f, 0f, 0f,
+                        0f, 0.95f, 0f, 0f, 0f,
+                        0f, 0f, 0.83f, 0f, 0f,
                         0f, 0f, 0f, 1f, 0f
                     )
                 )

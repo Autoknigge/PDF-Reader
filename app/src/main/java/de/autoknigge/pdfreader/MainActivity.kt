@@ -207,7 +207,7 @@ class MainActivity : AppCompatActivity() {
         pager.setBackgroundColor(
             when (viewMode) {
                 1 -> 0xFF0B0B0B.toInt()
-                2 -> 0xFF2A2118.toInt()
+                2 -> 0xFF3A3024.toInt()
                 else -> 0x00000000
             }
         )
