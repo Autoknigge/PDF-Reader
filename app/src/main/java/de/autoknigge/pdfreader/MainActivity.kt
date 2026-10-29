@@ -201,7 +201,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyViewMode() {
         btnTheme.text = when (viewMode) {
             1 -> "🌙  Dunkel"
-            2 -> "📖  Lesemodus"
+            2 -> "📖  Lesemodus (augenschonend)"
             else -> "☀  Hell"
         }
         pager.setBackgroundColor(
@@ -240,17 +240,91 @@ class MainActivity : AppCompatActivity() {
         updatePageLabel()
     }
 
+    /** Auswahlfenster mit Symbol und größerer Schrift; [checked] markiert den aktuellen Eintrag mit ✓. */
+    private fun menuDialog(
+        title: String,
+        items: List<Pair<String, String>>,
+        closeLabel: String,
+        checked: Int = -1,
+        keepOpen: Boolean = false,
+        onDismiss: (() -> Unit)? = null,
+        onPick: (Int) -> Unit
+    ) {
+        val d = resources.displayMetrics.density
+        var sel = checked
+        lateinit var dialog: AlertDialog
+        val list = android.widget.ListView(this).apply {
+            divider = null
+            setPadding((8 * d).toInt(), (4 * d).toInt(), (8 * d).toInt(), (4 * d).toInt())
+        }
+        val adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = items.size
+            override fun getItem(i: Int) = items[i]
+            override fun getItemId(i: Int) = i.toLong()
+            override fun getView(i: Int, v: View?, parent: android.view.ViewGroup): View {
+                val row = android.widget.LinearLayout(this@MainActivity).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    minimumHeight = (56 * d).toInt()
+                    setPadding((12 * d).toInt(), (6 * d).toInt(), (12 * d).toInt(), (6 * d).toInt())
+                    if (i == sel) setBackgroundColor(0x33D4AF37)
+                }
+                row.addView(TextView(this@MainActivity).apply {
+                    text = items[i].first
+                    textSize = 24f
+                    gravity = android.view.Gravity.CENTER
+                    layoutParams = android.widget.LinearLayout.LayoutParams((40 * d).toInt(), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                })
+                row.addView(TextView(this@MainActivity).apply {
+                    text = items[i].second
+                    textSize = 19f
+                    setTextColor(getColor(R.color.text_hell))
+                    layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                if (i == sel) row.addView(TextView(this@MainActivity).apply {
+                    text = "✓"
+                    textSize = 22f
+                    setTextColor(getColor(R.color.gold))
+                })
+                return row
+            }
+        }
+        list.adapter = adapter
+        list.setOnItemClickListener { _, _, which, _ ->
+            if (keepOpen) {
+                sel = which
+                adapter.notifyDataSetChanged()
+            } else {
+                dialog.setOnDismissListener(null)
+                dialog.dismiss()
+                onDismiss?.invoke()
+            }
+            onPick(which)
+        }
+        val titleView = TextView(this).apply {
+            text = title
+            textSize = 20f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(getColor(R.color.gold))
+            setPadding((20 * d).toInt(), (18 * d).toInt(), (20 * d).toInt(), (6 * d).toInt())
+        }
+        dialog = AlertDialog.Builder(this)
+            .setCustomTitle(titleView)
+            .setView(list)
+            .setNegativeButton(closeLabel, null)
+            .setOnDismissListener { onDismiss?.invoke() }
+            .create()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.textSize = 17f
+    }
+
     // ---------- Senden und Speichern ----------
 
     private fun openMoreMenu() {
         val src = currentSrc ?: return
-        AlertDialog.Builder(this)
-            .setTitle(src.name)
-            .setItems(arrayOf("Senden an …", "Speichern unter …")) { _, which ->
-                if (which == 0) shareCopy(src) else saveAs.launch(Docs.fileNameFor(src.name))
-            }
-            .setNegativeButton("Schließen", null)
-            .show()
+        menuDialog(src.name, listOf("📤" to "Senden an …", "💾" to "Speichern unter …"), "Schließen") { which ->
+            if (which == 0) shareCopy(src) else saveAs.launch(Docs.fileNameFor(src.name))
+        }
     }
 
     /** Gibt die PDF (bei Passwortschutz: die geschützte Originaldatei) an eine App nach Wahl weiter. */
@@ -318,27 +392,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun openReadSettings() {
         val s = ensureSpeaker() ?: return
-        AlertDialog.Builder(this)
-            .setTitle("Vorlesen")
-            .setItems(arrayOf("Geschwindigkeit", "Stimme")) { _, which ->
-                if (which == 0) chooseSpeed(s) else chooseVoice(s)
-            }
-            .setNegativeButton("Schließen", null)
-            .show()
+        menuDialog("🔊  Vorlesen", listOf("⏩" to "Geschwindigkeit", "🗣" to "Stimme"), "Schließen") { which ->
+            if (which == 0) chooseSpeed(s) else chooseVoice(s)
+        }
     }
 
     private fun chooseSpeed(s: Speaker) {
         val labels = arrayOf("Langsam", "Etwas langsamer", "Normal", "Schneller", "Schnell", "Sehr schnell")
         val rates = floatArrayOf(0.7f, 0.85f, 1.0f, 1.25f, 1.5f, 1.8f)
         val current = rates.indices.minByOrNull { kotlin.math.abs(rates[it] - s.rate) } ?: 2
-        AlertDialog.Builder(this)
-            .setTitle("Geschwindigkeit")
-            .setSingleChoiceItems(labels, current) { d, which ->
-                s.setRate(rates[which])
-                d.dismiss()
-            }
-            .setNegativeButton("Abbrechen", null)
-            .show()
+        val icons = arrayOf("🐢", "🚶", "👌", "🏃", "⚡", "🚀")
+        menuDialog("⏩  Geschwindigkeit", labels.indices.map { icons[it] to labels[it] }, "Abbrechen", current) { which ->
+            s.setRate(rates[which])
+        }
     }
 
     private fun chooseVoice(s: Speaker) {
@@ -368,15 +434,13 @@ class MainActivity : AppCompatActivity() {
             "Stimme ${i + 1}$quality$land"
         }.toTypedArray()
         val current = voices.indexOfFirst { it.name == s.currentVoiceName() }
-        AlertDialog.Builder(this)
-            .setTitle("Stimme – antippen zum Anhören")
-            .setSingleChoiceItems(labels, current) { _, which ->
-                s.setVoice(voices[which].name)
-                s.preview()
-            }
-            .setPositiveButton("Fertig", null)
-            .setOnDismissListener { if (wasPlaying) s.resume() }
-            .show()
+        menuDialog(
+            "🗣  Stimme – antippen zum Anhören", labels.map { "🔈" to it }, "Fertig", current, keepOpen = true,
+            onDismiss = { if (wasPlaying) s.resume() }
+        ) { which ->
+            s.setVoice(voices[which].name)
+            s.preview()
+        }
     }
 
     /** Lang auf eine Seitenstelle gedrückt: erkannten Absatz markieren und Auswahl anbieten. */
@@ -388,22 +452,22 @@ class MainActivity : AppCompatActivity() {
                 return@locate
             }
             adapter?.setHighlight(page, loc.boxes)
-            AlertDialog.Builder(this)
-                .setTitle("Vorlesen")
-                .setItems(arrayOf("Ab hier vorlesen", "Nur diesen Absatz vorlesen", "Nur diese Seite vorlesen")) { _, which ->
-                    readBar.visibility = View.VISIBLE
-                    when (which) {
-                        0 -> s.startFrom(page, loc.block, Speaker.Scope.DOCUMENT, Int.MAX_VALUE)
-                        1 -> s.startFrom(page, loc.paraFirst, Speaker.Scope.PARAGRAPH, loc.paraLast)
-                        else -> s.startFrom(page, 0, Speaker.Scope.PAGE, Int.MAX_VALUE)
-                    }
-                }
-                .setNegativeButton("Abbrechen", null)
-                .setOnDismissListener {
+            menuDialog(
+                "🔊  Vorlesen",
+                listOf("▶️" to "Ab hier vorlesen", "📝" to "Nur diesen Absatz vorlesen", "📄" to "Nur diese Seite vorlesen"),
+                "Abbrechen",
+                onDismiss = {
                     // Auswahl ohne Vorlesen: Markierung wieder entfernen.
                     if (speaker?.state != Speaker.State.PLAYING) adapter?.setHighlight(-1, null)
                 }
-                .show()
+            ) { which ->
+                readBar.visibility = View.VISIBLE
+                when (which) {
+                    0 -> s.startFrom(page, loc.block, Speaker.Scope.DOCUMENT, Int.MAX_VALUE)
+                    1 -> s.startFrom(page, loc.paraFirst, Speaker.Scope.PARAGRAPH, loc.paraLast)
+                    else -> s.startFrom(page, 0, Speaker.Scope.PAGE, Int.MAX_VALUE)
+                }
+            }
         }
     }
 
