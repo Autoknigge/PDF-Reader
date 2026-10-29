@@ -281,6 +281,7 @@ class MainActivity : AppCompatActivity() {
         checked: Int = -1,
         keepOpen: Boolean = false,
         onDismiss: (() -> Unit)? = null,
+        mark: String? = null,
         onPick: (Int) -> Unit
     ) {
         val d = resources.displayMetrics.density
@@ -302,18 +303,48 @@ class MainActivity : AppCompatActivity() {
                     setPadding((12 * d).toInt(), (6 * d).toInt(), (12 * d).toInt(), (6 * d).toInt())
                     if (i == sel) setBackgroundColor(0x33D4AF37)
                 }
-                row.addView(TextView(this@MainActivity).apply {
-                    text = items[i].first
-                    textSize = 24f
-                    gravity = android.view.Gravity.CENTER
-                    layoutParams = android.widget.LinearLayout.LayoutParams((40 * d).toInt(), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-                })
-                row.addView(TextView(this@MainActivity).apply {
+                // Kurzes Symbol links; längere Beschriftung („Seite 6“) steht als kleine Zeile über dem Text.
+                val captioned = items[i].first.length > 3
+                val label = TextView(this@MainActivity).apply {
                     text = items[i].second
-                    textSize = 19f
+                    textSize = if (captioned) 16f else 19f
                     setTextColor(getColor(R.color.text_hell))
-                    layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                })
+                    if (mark != null) {
+                        val sp = android.text.SpannableString(items[i].second)
+                        var at = items[i].second.indexOf(mark, ignoreCase = true)
+                        while (at >= 0) {
+                            sp.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), at, at + mark.length, 0)
+                            sp.setSpan(
+                                android.text.style.BackgroundColorSpan(0x55D4AF37), at, at + mark.length, 0
+                            )
+                            at = items[i].second.indexOf(mark, at + mark.length, ignoreCase = true)
+                        }
+                        text = sp
+                    }
+                }
+                if (captioned) {
+                    val col = android.widget.LinearLayout(this@MainActivity).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+                    col.addView(TextView(this@MainActivity).apply {
+                        text = items[i].first
+                        textSize = 13f
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        setTextColor(getColor(R.color.gold))
+                    })
+                    col.addView(label)
+                    row.addView(col)
+                } else {
+                    row.addView(TextView(this@MainActivity).apply {
+                        text = items[i].first
+                        textSize = 24f
+                        gravity = android.view.Gravity.CENTER
+                        layoutParams = android.widget.LinearLayout.LayoutParams((40 * d).toInt(), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                    })
+                    label.layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    row.addView(label)
+                }
                 if (i == sel) row.addView(TextView(this@MainActivity).apply {
                     text = "✓"
                     textSize = 22f
@@ -436,7 +467,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val title = "🔍  „$q“ – ${if (hits.size >= 150) "über 150" else hits.size.toString()} Treffer"
-        menuDialog(title, hits.map { "Seite ${it.page + 1}" to it.snippet }, "Schließen") { which ->
+        menuDialog(title, hits.map { "Seite ${it.page + 1}" to it.snippet }, "Schließen", mark = q) { which ->
             val h = hits[which]
             pager.setCurrentItem(h.page, false)
             searchHlPage = h.page
