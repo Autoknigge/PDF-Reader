@@ -11,6 +11,10 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- Installierte Druckdienste (Drucken) -->
+        <intent>
+            <action android:name="android.printservice.PrintService" />
+        </intent>
     </queries>
 
     <application

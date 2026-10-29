@@ -337,6 +337,25 @@ class MainActivity : AppCompatActivity() {
 
     /** Druckt über den Android-Druckdienst (Drucker im WLAN, Mopria, Hersteller-Plugins). */
     private fun printPdf(src: PdfSource) {
+        val services = packageManager.queryIntentServices(Intent("android.printservice.PrintService"), 0)
+        if (services.isEmpty()) {
+            menuDialog(
+                "🖨  Kein Druckdienst gefunden",
+                listOf("🔌" to "Druckeinstellungen öffnen", "📤" to "Mit Drucker-App senden (z. B. Epson iPrint)"),
+                "Abbrechen"
+            ) { which ->
+                if (which == 0) {
+                    try {
+                        startActivity(Intent(android.provider.Settings.ACTION_PRINT_SETTINGS))
+                    } catch (e: ActivityNotFoundException) {
+                        toast("Die Druckeinstellungen konnten nicht geöffnet werden.")
+                    }
+                } else {
+                    shareCopy(src)
+                }
+            }
+            return
+        }
         val pm = getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
         val file = src.file
         val adapter = object : android.print.PrintDocumentAdapter() {
