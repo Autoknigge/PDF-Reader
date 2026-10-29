@@ -290,6 +290,33 @@ class Speaker(
         }
     }
 
+    /** Ein Suchtreffer: Seite (0-basiert), Block, Textausschnitt und Lage zum Markieren. */
+    class SearchHit(val page: Int, val block: Int, val snippet: String, val boxes: List<Box>)
+
+    /** Sucht [query] (ohne Beachtung der Groß-/Kleinschreibung) im Text aller Seiten; läuft im Hintergrund. */
+    fun search(query: String, callback: (List<SearchHit>) -> Unit) {
+        worker.execute {
+            val q = query.trim()
+            val out = ArrayList<SearchHit>()
+            if (q.length >= 2) {
+                val all = ensurePages()
+                loop@ for ((pi, pt) in all.withIndex()) {
+                    for ((bi, blk) in pt.blocks.withIndex()) {
+                        val at = blk.text.indexOf(q, ignoreCase = true)
+                        if (at < 0) continue
+                        val from = (at - 40).coerceAtLeast(0)
+                        val to = (at + q.length + 60).coerceAtMost(blk.text.length)
+                        val snippet = (if (from > 0) "…" else "") + blk.text.substring(from, to) +
+                            (if (to < blk.text.length) "…" else "")
+                        out.add(SearchHit(pi, bi, snippet, blk.boxes))
+                        if (out.size >= 150) break@loop
+                    }
+                }
+            }
+            main.post { callback(out) }
+        }
+    }
+
     // ---------- Vorlesen ----------
 
     /** Meldet übersprungene Seiten ohne Text, damit nichts stillschweigend fehlt. */

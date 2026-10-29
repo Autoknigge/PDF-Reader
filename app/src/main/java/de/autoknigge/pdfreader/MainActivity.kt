@@ -10,6 +10,7 @@ import android.text.InputType
 import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -50,6 +51,11 @@ class MainActivity : AppCompatActivity() {
     private var srcFile: File? = null
     private var srcPages = 0
     private var currentSrc: PdfSource? = null
+    private var currentUri: Uri? = null
+    private lateinit var library: Library
+    private lateinit var recentBox: LinearLayout
+    private var ignoreSave = false
+    private var searchHlPage = -1
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -72,6 +78,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_reader)
         Ui.insets(findViewById(R.id.root))
 
+        library = Library(this)
+        recentBox = findViewById(R.id.recentBox)
         pager = findViewById(R.id.pager)
         empty = findViewById(R.id.empty)
         tvTitle = findViewById(R.id.tvTitle)
@@ -94,6 +102,11 @@ class MainActivity : AppCompatActivity() {
             override fun onPageSelected(position: Int) {
                 updatePageLabel()
                 speaker?.moveTo(position)
+                if (!ignoreSave) currentUri?.let { library.setPage(it.toString(), position) }
+                if (searchHlPage >= 0 && searchHlPage != position) {
+                    searchHlPage = -1
+                    if (speaker?.state != Speaker.State.PLAYING) adapter?.setHighlight(-1, null)
+                }
             }
         })
         tvPage.setOnClickListener { jumpToPage() }
@@ -114,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         val versionParts = (packageManager.getPackageInfo(packageName, 0).versionName ?: "").split(".")
         findViewById<TextView>(R.id.tvVersion).text = versionParts.take(2).joinToString(".")
 
+        showRecents()
         adManager = AdManager(this, findViewById<FrameLayout>(R.id.adContainer), findViewById(R.id.tvAdSettings), true)
         Intro.run(this) {
             adManager.start()
@@ -150,6 +164,8 @@ class MainActivity : AppCompatActivity() {
             srcFile = null
             srcPages = 0
             currentSrc = null
+            currentUri = null
+            searchHlPage = -1
             findViewById<View>(R.id.btnMore).visibility = View.GONE
             currentTitle = ""
             pager.visibility = View.GONE
@@ -159,6 +175,7 @@ class MainActivity : AppCompatActivity() {
             findViewById<View>(R.id.btnReadSettings).visibility = View.GONE
             empty.visibility = View.VISIBLE
             tvTitle.text = getString(R.string.app_name)
+            showRecents()
         } else {
             finish()
         }
@@ -168,7 +185,7 @@ class MainActivity : AppCompatActivity() {
         if (pager.visibility == View.VISIBLE) goBack() else super.onBackPressed()
     }
 
-    private fun open(uri: Uri, password: String? = null) {
+    private fun open(uri: Uri, password: String? = null, fromRecent: Boolean = false) {
         if (loading) return
         loading = true
         tvTitle.text = "Wird geöffnet …"
@@ -177,14 +194,28 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 loading = false
-                r.onSuccess { show(it) }.onFailure { e ->
+                r.onSuccess {
+                    currentUri = uri
+                    library.touch(uri.toString(), it.name, it.pages)
+                    val start = library.page(uri.toString())
+                    ignoreSave = true
+                    show(it)
+                    if (start in 1 until it.pages) pager.setCurrentItem(start, false)
+                    pager.postDelayed({ ignoreSave = false }, 700)
+                }.onFailure { e ->
                     if (e is PasswordNeeded) {
                         askPassword(e.name, e.wrong) { pw ->
-                            if (pw == null) resetTitle() else open(uri, pw)
+                            if (pw == null) resetTitle() else open(uri, pw, fromRecent)
                         }
                     } else {
                         resetTitle()
-                        toast(e.message ?: "Die PDF konnte nicht geöffnet werden.")
+                        if (fromRecent) {
+                            library.removeRecent(uri.toString())
+                            showRecents()
+                            toast("Diese Datei ist nicht mehr verfügbar und wurde aus der Liste entfernt.")
+                        } else {
+                            toast(e.message ?: "Die PDF konnte nicht geöffnet werden.")
+                        }
                     }
                 }
             }
@@ -322,16 +353,159 @@ class MainActivity : AppCompatActivity() {
 
     private fun openMoreMenu() {
         val src = currentSrc ?: return
-        menuDialog(
-            src.name,
-            listOf("📤" to "Senden an …", "💾" to "Speichern unter …", "🖨" to "Drucken"),
-            "Schließen"
-        ) { which ->
-            when (which) {
-                0 -> shareCopy(src)
-                1 -> saveAs.launch(Docs.fileNameFor(src.name))
-                else -> printPdf(src)
+        val uri = currentUri?.toString()
+        val page = pager.currentItem
+        val marked = uri != null && library.isBookmarked(uri, page)
+        val marks = if (uri != null) library.bookmarks(uri) else emptyList()
+        val items = ArrayList<Pair<String, String>>()
+        val actions = ArrayList<() -> Unit>()
+        items.add("🔍" to "Im Text suchen …"); actions.add { searchDialog() }
+        items.add("🔖" to (if (marked) "Lesezeichen entfernen (Seite ${page + 1})" else "Lesezeichen setzen (Seite ${page + 1})"))
+        actions.add { toggleBookmark() }
+        if (marks.isNotEmpty()) {
+            items.add("📑" to "Lesezeichen anzeigen (${marks.size})"); actions.add { bookmarkList() }
+        }
+        items.add("📤" to "Senden an …"); actions.add { shareCopy(src) }
+        items.add("💾" to "Speichern unter …"); actions.add { saveAs.launch(Docs.fileNameFor(src.name)) }
+        items.add("🖨" to "Drucken"); actions.add { printPdf(src) }
+        menuDialog(src.name, items, "Schließen") { which -> actions[which]() }
+    }
+
+    // ---------- Lesezeichen und Suche ----------
+
+    private fun toggleBookmark() {
+        val uri = currentUri?.toString() ?: return
+        val now = library.toggleBookmark(uri, pager.currentItem)
+        updatePageLabel()
+        toast(if (now) "Lesezeichen gesetzt." else "Lesezeichen entfernt.")
+    }
+
+    private fun bookmarkList() {
+        val uri = currentUri?.toString() ?: return
+        val marks = library.bookmarks(uri)
+        if (marks.isEmpty()) return
+        menuDialog("📑  Lesezeichen", marks.map { "🔖" to "Seite ${it + 1}" }, "Schließen") { which ->
+            pager.setCurrentItem(marks[which], false)
+        }
+    }
+
+    private fun searchDialog() {
+        val sp = ensureSpeaker() ?: return
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            hint = "Suchwort"
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            textSize = 18f
+        }
+        val box = FrameLayout(this).apply {
+            val pad = (20 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input)
+        }
+        val run = {
+            val q = input.text.toString().trim()
+            if (q.length < 2) {
+                toast("Bitte mindestens 2 Zeichen eingeben.")
+            } else {
+                toast("Suche …")
+                sp.search(q) { hits -> showSearchHits(q, hits) }
             }
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("🔍  Im Text suchen")
+            .setView(box)
+            .setPositiveButton("Suchen") { _, _ -> run() }
+            .setNegativeButton("Abbrechen", null)
+            .create()
+        input.setOnEditorActionListener { _, _, _ ->
+            dialog.dismiss()
+            run()
+            true
+        }
+        dialog.show()
+        input.requestFocus()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+    }
+
+    private fun showSearchHits(q: String, hits: List<Speaker.SearchHit>) {
+        if (isFinishing || isDestroyed || currentSrc == null) return
+        if (hits.isEmpty()) {
+            toast("Nichts gefunden. Bei eingescannten PDFs (nur Bilder) ist keine Textsuche möglich.")
+            return
+        }
+        val title = "🔍  „$q“ – ${if (hits.size >= 150) "über 150" else hits.size.toString()} Treffer"
+        menuDialog(title, hits.map { "Seite ${it.page + 1}" to it.snippet }, "Schließen") { which ->
+            val h = hits[which]
+            pager.setCurrentItem(h.page, false)
+            searchHlPage = h.page
+            pager.post { adapter?.setHighlight(h.page, h.boxes) }
+        }
+    }
+
+    // ---------- Zuletzt geöffnet ----------
+
+    private fun showRecents() {
+        recentBox.removeAllViews()
+        val list = library.recents()
+        if (list.isEmpty()) {
+            recentBox.visibility = View.GONE
+            return
+        }
+        recentBox.visibility = View.VISIBLE
+        val d = resources.displayMetrics.density
+        recentBox.addView(TextView(this).apply {
+            text = "🕘  Zuletzt geöffnet"
+            textSize = 16f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(getColor(R.color.gold))
+            setPadding((4 * d).toInt(), 0, 0, (6 * d).toInt())
+        })
+        for (doc in list) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setBackgroundResource(R.drawable.bg_box_dark)
+                setPadding((14 * d).toInt(), (8 * d).toInt(), (4 * d).toInt(), (8 * d).toInt())
+                isClickable = true
+                isFocusable = true
+                val lp = LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                lp.bottomMargin = (6 * d).toInt()
+                layoutParams = lp
+                setOnClickListener { if (!loading) open(Uri.parse(doc.uri), null, true) }
+            }
+            val texts = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            texts.addView(TextView(this).apply {
+                text = "📄  ${doc.name}"
+                textSize = 16f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                setTextColor(getColor(R.color.text_hell))
+            })
+            texts.addView(TextView(this).apply {
+                text = if (doc.pages > 0) "Weiter auf Seite ${doc.page + 1} von ${doc.pages}" else ""
+                textSize = 13f
+                setTextColor(getColor(R.color.text_gedimmt))
+            })
+            row.addView(texts)
+            row.addView(TextView(this).apply {
+                text = "✕"
+                textSize = 18f
+                gravity = android.view.Gravity.CENTER
+                contentDescription = "Aus der Liste entfernen"
+                setTextColor(getColor(R.color.text_gedimmt))
+                layoutParams = LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt())
+                setOnClickListener {
+                    library.removeRecent(doc.uri)
+                    showRecents()
+                }
+            })
+            recentBox.addView(row)
         }
     }
 
@@ -560,7 +734,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun updatePageLabel() {
         val total = adapter?.itemCount ?: 0
-        if (total > 0) tvPage.text = "${pager.currentItem + 1} / $total"
+        if (total > 0) {
+            val mark = currentUri?.let { library.isBookmarked(it.toString(), pager.currentItem) } == true
+            tvPage.text = "${pager.currentItem + 1} / $total" + if (mark) "  🔖" else ""
+        }
     }
 
     private fun jumpToPage() {
