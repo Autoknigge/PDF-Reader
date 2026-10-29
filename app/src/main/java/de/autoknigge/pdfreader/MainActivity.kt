@@ -322,9 +322,54 @@ class MainActivity : AppCompatActivity() {
 
     private fun openMoreMenu() {
         val src = currentSrc ?: return
-        menuDialog(src.name, listOf("📤" to "Senden an …", "💾" to "Speichern unter …"), "Schließen") { which ->
-            if (which == 0) shareCopy(src) else saveAs.launch(Docs.fileNameFor(src.name))
+        menuDialog(
+            src.name,
+            listOf("📤" to "Senden an …", "💾" to "Speichern unter …", "🖨" to "Drucken"),
+            "Schließen"
+        ) { which ->
+            when (which) {
+                0 -> shareCopy(src)
+                1 -> saveAs.launch(Docs.fileNameFor(src.name))
+                else -> printPdf(src)
+            }
         }
+    }
+
+    /** Druckt über den Android-Druckdienst (Drucker im WLAN, Mopria, Hersteller-Plugins). */
+    private fun printPdf(src: PdfSource) {
+        val pm = getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+        val file = src.file
+        val adapter = object : android.print.PrintDocumentAdapter() {
+            override fun onLayout(
+                old: android.print.PrintAttributes?, new: android.print.PrintAttributes?,
+                cancel: android.os.CancellationSignal?, callback: LayoutResultCallback, extras: Bundle?
+            ) {
+                if (cancel?.isCanceled == true) {
+                    callback.onLayoutCancelled()
+                    return
+                }
+                val info = android.print.PrintDocumentInfo.Builder(Docs.fileNameFor(src.name))
+                    .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                    .setPageCount(src.pages)
+                    .build()
+                callback.onLayoutFinished(info, true)
+            }
+
+            override fun onWrite(
+                pages: Array<out android.print.PageRange>?, dest: android.os.ParcelFileDescriptor,
+                cancel: android.os.CancellationSignal?, callback: WriteResultCallback
+            ) {
+                try {
+                    file.inputStream().use { i ->
+                        java.io.FileOutputStream(dest.fileDescriptor).use { o -> i.copyTo(o) }
+                    }
+                    callback.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+                } catch (e: Exception) {
+                    callback.onWriteFailed(e.message)
+                }
+            }
+        }
+        pm.print(Docs.fileNameFor(src.name), adapter, null)
     }
 
     /** Gibt die PDF (bei Passwortschutz: die geschützte Originaldatei) an eine App nach Wahl weiter. */
