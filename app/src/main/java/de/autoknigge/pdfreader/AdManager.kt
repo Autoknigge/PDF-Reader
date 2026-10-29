@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.Toast
+import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
@@ -30,6 +31,8 @@ class AdManager(
     private var started = false
     private var adsInitialized = false
     private var adView: AdView? = null
+    private var retries = 0
+    private val retryHandler = Handler(Looper.getMainLooper())
 
     fun start() {
         if (started) return
@@ -115,6 +118,21 @@ class AdManager(
         container.removeAllViews()
         container.addView(view)
         adView = view
+        view.adListener = object : AdListener() {
+            override fun onAdLoaded() {
+                retries = 0
+            }
+
+            override fun onAdFailedToLoad(error: LoadAdError) {
+                // Kein Fill: nach einer Pause erneut versuchen (30, 60 und 120 Sekunden).
+                if (adView !== view || retries >= 3) return
+                val wait = 30_000L shl retries
+                retries++
+                retryHandler.postDelayed({
+                    if (adView === view) view.loadAd(AdRequest.Builder().build())
+                }, wait)
+            }
+        }
         view.loadAd(AdRequest.Builder().build())
     }
 
@@ -127,6 +145,7 @@ class AdManager(
     }
 
     fun destroy() {
+        retryHandler.removeCallbacksAndMessages(null)
         adView?.destroy()
         adView = null
     }
