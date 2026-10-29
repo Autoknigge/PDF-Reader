@@ -30,26 +30,11 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
-      - name: Debug-APK bauen (Testversion zum Installieren)
-        run: >
-          gradle assembleDebug --no-daemon
-          -PADMOB_APP_ID="$ADMOB_APP_ID"
-          -PADMOB_BANNER_ID="$ADMOB_BANNER_ID"
-          -PADMOB_OPEN_ID="$ADMOB_OPEN_ID"
-
-      - name: Debug-APK umbenennen
-        run: cp app/build/outputs/apk/debug/app-debug.apk PdfReader.apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: PdfReader
-          path: PdfReader.apk
-
       - name: Keystore bereitstellen
         if: env.HAS_KEYSTORE == 'true'
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+        run: printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | tr -cd 'A-Za-z0-9+/=' | base64 -d > "$RUNNER_TEMP/release.jks"
 
-      - name: Signierte Release-APK und AAB bauen
+      - name: Signierte APK und AAB bauen (identischer Stand)
         if: env.HAS_KEYSTORE == 'true'
         run: >
           gradle assembleRelease bundleRelease --no-daemon
@@ -64,15 +49,15 @@ jobs:
       - name: Release-Dateien umbenennen
         if: env.HAS_KEYSTORE == 'true'
         run: |
-          cp app/build/outputs/apk/release/app-release.apk PdfReader-signiert.apk
+          cp app/build/outputs/apk/release/app-release.apk PdfReader.apk
           cp app/build/outputs/bundle/release/app-release.aab PdfReader.aab
 
       - uses: actions/upload-artifact@v4
         if: env.HAS_KEYSTORE == 'true'
         with:
-          name: PdfReader-signiert
+          name: PdfReader
           path: |
-            PdfReader-signiert.apk
+            PdfReader.apk
             PdfReader.aab
 
       - name: GitHub-Release (bei Tag, z. B. 1.0)
@@ -81,6 +66,5 @@ jobs:
         with:
           files: |
             PdfReader.apk
-            PdfReader-signiert.apk
             PdfReader.aab
           fail_on_unmatched_files: false
