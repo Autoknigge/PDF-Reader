@@ -68,6 +68,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val signLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val uri = res.data?.data
+        if (res.resultCode == RESULT_OK && uri != null) open(uri)
+    }
+
     private val saveAs = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         val src = currentSrc
         if (uri != null && src != null) saveCopy(src, uri)
@@ -401,6 +406,13 @@ class MainActivity : AppCompatActivity() {
         items.add("📤" to "Senden an …"); actions.add { shareCopy(src) }
         items.add("💾" to "Speichern unter …"); actions.add { saveAs.launch(Docs.fileNameFor(src.name)) }
         items.add("🖨" to "Drucken"); actions.add { printPdf(src) }
+        items.add("✍" to "Unterschreiben …"); actions.add {
+            signLauncher.launch(
+                Intent(this, SignActivity::class.java)
+                    .putExtra(SignActivity.EXTRA_FILE, src.file.absolutePath)
+                    .putExtra(SignActivity.EXTRA_NAME, src.name)
+            )
+        }
         menuDialog(src.name, items, "Schließen") { which -> actions[which]() }
     }
 
