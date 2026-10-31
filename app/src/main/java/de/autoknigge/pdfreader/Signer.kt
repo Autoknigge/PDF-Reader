@@ -10,6 +10,9 @@ import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
+import android.graphics.Bitmap
+import java.util.IdentityHashMap
 import com.tom_roush.pdfbox.util.Matrix
 import java.io.BufferedOutputStream
 import java.io.File
@@ -26,16 +29,12 @@ object Signer {
         file: File,
         displayName: String,
         placements: List<Placement>,
-        sigFile: File,
         progress: (Int) -> Unit
     ): Result {
         val name = Docs.fileNameFor(displayName).removeSuffix(".pdf") + "_unterschrieben.pdf"
-        val bmp = BitmapFactory.decodeFile(sigFile.path)
-            ?: throw IOException("Die Unterschrift konnte nicht gelesen werden.")
-        val aspect = bmp.height.toFloat() / bmp.width
         val byPage = placements.groupBy { it.page }
         return PDDocument.load(file, "", MemoryUsageSetting.setupMixed(48L * 1024 * 1024)).use { doc ->
-            val img = LosslessFactory.createFromImage(doc, bmp)
+            val images = IdentityHashMap<Bitmap, PDImageXObject>()
             var done = 0
             for ((index, list) in byPage) {
                 val page = doc.getPage(index)
@@ -54,8 +53,9 @@ object Signer {
                 PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
                     cs.transform(m)
                     for (p in list) {
+                        val img = images.getOrPut(p.bmp) { LosslessFactory.createFromImage(doc, p.bmp) }
                         val sw = p.w * vw
-                        val sh = sw * aspect
+                        val sh = sw * p.bmp.height / p.bmp.width
                         cs.drawImage(img, p.cx * vw - sw / 2f, vh - p.cy * vh - sh / 2f, sw, sh)
                     }
                 }

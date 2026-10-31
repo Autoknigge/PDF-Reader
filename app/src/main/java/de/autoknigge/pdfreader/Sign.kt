@@ -19,16 +19,126 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** Eine Unterschrift auf einer Seite: Mittelpunkt und Breite als Bruchteil der (sichtbaren) Seite. */
-class Placement(val page: Int, var cx: Float, var cy: Float, var w: Float)
+class Placement(val page: Int, var cx: Float, var cy: Float, var w: Float, val bmp: Bitmap)
 
-/** Die gespeicherte Unterschrift (nur auf dem Gerät, als PNG mit transparentem Hintergrund). */
+/** Gespeicherte Unterschriften (nur auf dem Gerät, als PNG mit transparentem Hintergrund). */
 object SignatureStore {
-    fun file(ctx: Context) = File(ctx.filesDir, "unterschrift.png")
+    private const val MAX = 6
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("signatur", Context.MODE_PRIVATE)
+    private fun dir(ctx: Context) = File(ctx.filesDir, "unterschriften").apply { mkdirs() }
 
-    fun load(ctx: Context): Bitmap? = file(ctx).takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }
+    /** Alle gespeicherten Unterschriften, die neueste zuerst. */
+    fun list(ctx: Context): List<File> {
+        val old = File(ctx.filesDir, "unterschrift.png")
+        if (old.exists()) {
+            // frühere Version: eine einzige Unterschrift übernehmen
+            old.copyTo(File(dir(ctx), "sig_${old.lastModified()}.png"), overwrite = true)
+            old.delete()
+        }
+        return dir(ctx).listFiles { f -> f.extension == "png" }?.sortedByDescending { it.name } ?: emptyList()
+    }
 
-    fun save(ctx: Context, bmp: Bitmap) {
-        file(ctx).outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    fun add(ctx: Context, bmp: Bitmap): File {
+        val f = File(dir(ctx), "sig_${System.currentTimeMillis()}.png")
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        list(ctx).drop(MAX).forEach { it.delete() }
+        setCurrent(ctx, f)
+        return f
+    }
+
+    fun delete(ctx: Context, f: File) {
+        f.delete()
+        if (prefs(ctx).getString("aktuell", null) == f.name) prefs(ctx).edit().remove("aktuell").apply()
+    }
+
+    fun current(ctx: Context): File? {
+        val name = prefs(ctx).getString("aktuell", null)
+        val all = list(ctx)
+        return all.firstOrNull { it.name == name } ?: all.firstOrNull()
+    }
+
+    fun setCurrent(ctx: Context, f: File) = prefs(ctx).edit().putString("aktuell", f.name).apply()
+    fun load(f: File): Bitmap? = BitmapFactory.decodeFile(f.path)
+    fun place(ctx: Context): String = prefs(ctx).getString("ort", "") ?: ""
+    fun setPlace(ctx: Context, v: String) = prefs(ctx).edit().putString("ort", v).apply()
+}
+
+/** Bildverarbeitung: Foto einer Unterschrift freistellen, Text (Datum, Ort) als Bild. */
+object SignatureImage {
+    const val BLUE = 0xFF10205E.toInt()
+    const val BLACK = 0xFF111111.toInt()
+
+    fun scaleDown(src: Bitmap, maxSide: Int): Bitmap {
+        val m = max(src.width, src.height)
+        if (m <= maxSide) return src
+        val f = maxSide.toFloat() / m
+        return Bitmap.createScaledBitmap(src, max(1, (src.width * f).toInt()), max(1, (src.height * f).toInt()), true)
+    }
+
+    fun rotate(src: Bitmap, deg: Float): Bitmap =
+        Bitmap.createBitmap(src, 0, 0, src.width, src.height, Matrix().apply { postRotate(deg) }, true)
+
+    /**
+     * Macht aus einem Foto (dunkle Schrift auf hellem Papier) eine freigestellte Unterschrift.
+     * [sensitivity] 0..100: höher = auch hellere Striche bleiben erhalten.
+     */
+    fun fromPhoto(src: Bitmap, sensitivity: Int, ink: Int): Bitmap? {
+        val bmp = scaleDown(src, 1400)
+        val w = bmp.width
+        val h = bmp.height
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, 0, 0, w, h)
+        val lum = IntArray(w * h)
+        val hist = IntArray(256)
+        for (i in px.indices) {
+            val p = px[i]
+            val l = ((Color.red(p) * 299 + Color.green(p) * 587 + Color.blue(p) * 114) / 1000)
+            lum[i] = l
+            hist[l]++
+        }
+        // Papierhelligkeit: 85. Perzentil
+        var acc = 0
+        var bg = 255
+        val target = (lum.size * 0.85).toInt()
+        for (v in 0..255) { acc += hist[v]; if (acc >= target) { bg = v; break } }
+        val t = bg * (0.55f + 0.40f * sensitivity / 100f)
+        val out = IntArray(w * h)
+        var minX = w; var minY = h; var maxX = -1; var maxY = -1
+        val r = Color.red(ink); val g = Color.green(ink); val b = Color.blue(ink)
+        for (y in 0 until h) for (x in 0 until w) {
+            val l = lum[y * w + x]
+            if (l >= t) continue
+            val a = min(1f, (t - l) / (t * 0.5f))
+            val alpha = (a * 255).toInt()
+            out[y * w + x] = Color.argb(alpha, r, g, b)
+            if (alpha > 60) {
+                if (x < minX) minX = x; if (x > maxX) maxX = x
+                if (y < minY) minY = y; if (y > maxY) maxY = y
+            }
+        }
+        if (maxX < 0) return null
+        val pad = max(6, ((maxX - minX) * 0.03f).toInt())
+        val x0 = max(0, minX - pad); val y0 = max(0, minY - pad)
+        val x1 = min(w - 1, maxX + pad); val y1 = min(h - 1, maxY + pad)
+        val cw = x1 - x0 + 1; val ch = y1 - y0 + 1
+        val res = Bitmap.createBitmap(cw, ch, Bitmap.Config.ARGB_8888)
+        res.setPixels(out, y0 * w + x0, w, 0, 0, cw, ch)
+        return res
+    }
+
+    /** Text (zum Beispiel „Cappeln, 31.10.2026“) als freigestelltes Bild. */
+    fun textBitmap(text: String, ink: Int): Bitmap {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ink
+            textSize = 72f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.NORMAL)
+        }
+        val w = max(40, p.measureText(text).toInt() + 24)
+        val fm = p.fontMetrics
+        val h = (fm.descent - fm.ascent).toInt() + 20
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        Canvas(bmp).drawText(text, 12f, 10f - fm.ascent, p)
+        return bmp
     }
 }
 
@@ -148,11 +258,6 @@ class PlaceView(ctx: Context) : View(ctx) {
     private val density = ctx.resources.displayMetrics.density
     private var page: Bitmap? = null
     var pageIndex = 0
-    var sig: Bitmap? = null
-        set(v) {
-            field = v
-            invalidate()
-        }
     var placements: MutableList<Placement> = ArrayList()
     var selected: Placement? = null
         set(v) {
@@ -217,7 +322,7 @@ class PlaceView(ctx: Context) : View(ctx) {
     }
 
     private fun boxOf(p: Placement, out: RectF): RectF {
-        val s = sig ?: return out.apply { setEmpty() }
+        val s = p.bmp
         val w = p.w * dest.width()
         val h = w * s.height / s.width
         val x = dest.left + p.cx * dest.width()
@@ -236,11 +341,10 @@ class PlaceView(ctx: Context) : View(ctx) {
         paint.color = 0x66000000
         canvas.drawRect(dest.left + 3 * density, dest.top + 4 * density, dest.right + 3 * density, dest.bottom + 4 * density, paint)
         canvas.drawBitmap(b, null, dest, null)
-        val s = sig ?: return
         for (p in placements) {
             if (p.page != pageIndex) continue
             boxOf(p, rect)
-            canvas.drawBitmap(s, null, rect, null)
+            canvas.drawBitmap(p.bmp, null, rect, null)
             if (p === selected) {
                 val r = RectF(rect)
                 r.inset(-5 * density, -5 * density)
