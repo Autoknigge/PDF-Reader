@@ -31,6 +31,8 @@ class ZoomableImageView @JvmOverloads constructor(
 
     /** Meldet langes Drücken: Seitenbruchteile x, y (0 … 1). */
     var onLongPressFraction: ((Float, Float) -> Unit)? = null
+    /** Einfaches Antippen: Bruchteile x/y der Seite. */
+    var onTapFraction: ((Float, Float) -> Unit)? = null
 
     /** Zu markierende Rechtecke als Seitenbruchteile; null = keine Markierung. */
     var highlight: List<Box>? = null
@@ -76,6 +78,22 @@ class ZoomableImageView @JvmOverloads constructor(
             drawMatrix.postTranslate(-dx, -dy)
             clampAndApply()
             return true
+        }
+
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            val d = drawable ?: return false
+            val iw = d.intrinsicWidth.toFloat()
+            val ih = d.intrinsicHeight.toFloat()
+            if (iw <= 0f || ih <= 0f) return false
+            val inverse = Matrix()
+            if (!drawMatrix.invert(inverse)) return false
+            val pt = floatArrayOf(e.x, e.y)
+            inverse.mapPoints(pt)
+            val fx = pt[0] / iw
+            val fy = pt[1] / ih
+            if (fx < 0f || fx > 1f || fy < 0f || fy > 1f) return false
+            onTapFraction?.invoke(fx, fy)
+            return false
         }
 
         override fun onLongPress(e: MotionEvent) {

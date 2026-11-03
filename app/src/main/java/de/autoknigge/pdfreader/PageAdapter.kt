@@ -30,6 +30,9 @@ class PageAdapter(file: File, private val renderWidth: Int) : RecyclerView.Adapt
     /** Langes Drücken auf eine Seitenstelle: Seite, Bruchteile x/y. */
     var onLongPress: ((Int, Float, Float) -> Unit)? = null
 
+    /** Einfaches Antippen einer Seitenstelle: Seite, Bruchteile x/y. */
+    var onTap: ((Int, Float, Float) -> Unit)? = null
+
     private var recycler: RecyclerView? = null
     private var hlPage = -1
     private var hlBoxes: List<Box>? = null
@@ -81,6 +84,10 @@ class PageAdapter(file: File, private val renderWidth: Int) : RecyclerView.Adapt
         h.image.setImageBitmap(null)
         h.image.tag = position
         h.image.highlight = if (position == hlPage) hlBoxes else null
+        h.image.onTapFraction = { fx, fy ->
+            val pos = h.bindingAdapterPosition
+            if (pos != RecyclerView.NO_POSITION) onTap?.invoke(pos, fx, fy)
+        }
         h.image.onLongPressFraction = { fx, fy ->
             val pos = h.bindingAdapterPosition
             if (pos != RecyclerView.NO_POSITION) onLongPress?.invoke(pos, fx, fy)

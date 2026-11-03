@@ -259,6 +259,10 @@ class MainActivity : AppCompatActivity() {
         viewMode = getSharedPreferences("pdfreader", MODE_PRIVATE).getInt("view_mode", 0)
         a.mode = viewMode
         a.onLongPress = { page, fx, fy -> onPageLongPress(page, fx, fy) }
+        links?.close()
+        val pl = PageLinks(src.file)
+        links = pl
+        a.onTap = { page, fx, fy -> onPageTap(pl, page, fx, fy) }
         adapter = a
         pager.adapter = a
         srcFile = src.file
@@ -727,6 +731,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Lang auf eine Seitenstelle gedrückt: erkannten Absatz markieren und Auswahl anbieten. */
+    private var links: PageLinks? = null
+
+    /** Tippt jemand auf einen Weblink der PDF, wird er nach Rückfrage im Browser geöffnet. */
+    private fun onPageTap(pl: PageLinks, page: Int, fx: Float, fy: Float) {
+        Thread {
+            val hit = pl.forPage(page).firstOrNull { fx >= it.l && fx <= it.r && fy >= it.t && fy <= it.b } ?: return@Thread
+            val uri = try { Uri.parse(hit.url) } catch (e: Exception) { return@Thread }
+            val scheme = uri.scheme?.lowercase() ?: return@Thread
+            if (scheme != "http" && scheme != "https" && scheme != "mailto") return@Thread
+            runOnUiThread {
+                AlertDialog.Builder(this)
+                    .setTitle("Link öffnen?")
+                    .setMessage(hit.url)
+                    .setPositiveButton("Öffnen") { _, _ ->
+                        try { startActivity(Intent(Intent.ACTION_VIEW, uri)) } catch (e: Exception) { toast("Dafür gibt es keine passende App.") }
+                    }
+                    .setNegativeButton("Abbrechen", null)
+                    .show()
+            }
+        }.start()
+    }
+
     private fun onPageLongPress(page: Int, fx: Float, fy: Float) {
         val s = ensureSpeaker() ?: return
         s.locate(page, fx, fy) { loc ->
@@ -852,6 +878,7 @@ class MainActivity : AppCompatActivity() {
         releaseSpeaker()
         adManager.destroy()
         adapter?.shutdown()
+        links?.close()
         worker.shutdown()
         super.onDestroy()
     }
