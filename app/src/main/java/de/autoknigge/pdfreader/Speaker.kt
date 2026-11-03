@@ -290,6 +290,23 @@ class Speaker(
         }
     }
 
+    /** Text der Blöcke [first] bis [last] einer Seite (zum Kopieren); Absätze durch Leerzeilen getrennt. Läuft im Hintergrund. */
+    fun textRange(p: Int, first: Int, last: Int, callback: (String) -> Unit) {
+        worker.execute {
+            val pt = ensurePages().getOrNull(p)
+            val sb = StringBuilder()
+            if (pt != null) {
+                val from = first.coerceAtLeast(0)
+                val to = last.coerceAtMost(pt.blocks.lastIndex)
+                for (i in from..to) {
+                    if (i > from) sb.append(if (pt.blocks[i].para == pt.blocks[i - 1].para) " " else "\n\n")
+                    sb.append(pt.blocks[i].text)
+                }
+            }
+            main.post { callback(sb.toString().trim()) }
+        }
+    }
+
     /** Ein Suchtreffer: Seite (0-basiert), Block, Textausschnitt und Lage zum Markieren. */
     class SearchHit(val page: Int, val block: Int, val snippet: String, val boxes: List<Box>)
 

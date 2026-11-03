@@ -762,14 +762,32 @@ class MainActivity : AppCompatActivity() {
             }
             adapter?.setHighlight(page, loc.boxes)
             menuDialog(
-                "🔊  Vorlesen",
-                listOf("▶️" to "Ab hier vorlesen", "📝" to "Nur diesen Absatz vorlesen", "📄" to "Nur diese Seite vorlesen"),
+                "Textstelle",
+                listOf("▶️" to "Ab hier vorlesen", "📝" to "Nur diesen Absatz vorlesen", "📄" to "Nur diese Seite vorlesen",
+                    "📋" to "Absatz kopieren", "📋" to "Ab hier bis Seitenende kopieren", "📋" to "Ganze Seite kopieren"),
                 "Abbrechen",
                 onDismiss = {
                     // Auswahl ohne Vorlesen: Markierung wieder entfernen.
                     if (speaker?.state != Speaker.State.PLAYING) adapter?.setHighlight(-1, null)
                 }
             ) { which ->
+                if (which >= 3) {
+                    val (from, to) = when (which) {
+                        3 -> loc.paraFirst to loc.paraLast
+                        4 -> loc.paraFirst to Int.MAX_VALUE
+                        else -> 0 to Int.MAX_VALUE
+                    }
+                    s.textRange(page, from, to) { txt ->
+                        if (txt.isEmpty()) {
+                            toast("Hier wurde kein Text erkannt.")
+                        } else {
+                            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("PDF-Text", txt))
+                            toast("Kopiert: ${txt.length} Zeichen")
+                        }
+                    }
+                    return@menuDialog
+                }
                 readBar.visibility = View.VISIBLE
                 when (which) {
                     0 -> s.startFrom(page, loc.block, Speaker.Scope.DOCUMENT, Int.MAX_VALUE)
