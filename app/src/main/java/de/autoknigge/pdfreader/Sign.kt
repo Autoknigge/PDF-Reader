@@ -19,7 +19,8 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** Eine Unterschrift auf einer Seite: Mittelpunkt und Breite als Bruchteil der (sichtbaren) Seite. */
-class Placement(val page: Int, var cx: Float, var cy: Float, var w: Float, val bmp: Bitmap)
+/** Mit [spec] ist es ein echter Text (Neu oder Korrektur), sonst ein Bild (Unterschrift, Datum/Ort). */
+class Placement(val page: Int, var cx: Float, var cy: Float, var w: Float, var bmp: Bitmap, var spec: TextSpec? = null)
 
 /** Gespeicherte Unterschriften (nur auf dem Gerät, als PNG mit transparentem Hintergrund). */
 object SignatureStore {
@@ -292,8 +293,12 @@ class PlaceView(ctx: Context) : View(ctx) {
 
         override fun onScale(d: ScaleGestureDetector): Boolean {
             val s = selected ?: return false
-            s.w = (s.w * d.scaleFactor).coerceIn(0.08f, 0.9f)
-            onResize?.invoke(s)
+            if (s.spec != null) {
+                onTextScale?.invoke(s, d.scaleFactor)
+            } else {
+                s.w = (s.w * d.scaleFactor).coerceIn(0.08f, 0.9f)
+                onResize?.invoke(s)
+            }
             invalidate()
             return true
         }
@@ -303,6 +308,31 @@ class PlaceView(ctx: Context) : View(ctx) {
         }
     })
     var onResize: ((Placement) -> Unit)? = null
+    var onTextScale: ((Placement, Float) -> Unit)? = null
+    var onMoved: ((Placement) -> Unit)? = null
+
+    /** Hintergrundfarbe der Seite rund um [p] (Mittelwert der Randpunkte), um alten Text abzudecken. */
+    fun sampleBg(p: Placement): Int {
+        val b = page ?: return Color.WHITE
+        layoutPage()
+        boxOf(p, rect)
+        val k = b.width / dest.width()
+        val off = 4f / k
+        val pts = ArrayList<Int>()
+        fun px(x: Float, y: Float) {
+            val ix = ((x - dest.left) * k).toInt().coerceIn(0, b.width - 1)
+            val iy = ((y - dest.top) * k).toInt().coerceIn(0, b.height - 1)
+            pts.add(b.getPixel(ix, iy))
+        }
+        for (i in 0..11) {
+            val fx = rect.left + rect.width() * (i + 0.5f) / 12f
+            val fy = rect.top + rect.height() * (i + 0.5f) / 12f
+            px(fx, rect.top - off); px(fx, rect.bottom + off)
+            px(rect.left - off, fy); px(rect.right + off, fy)
+        }
+        val sorted = pts.sortedBy { Color.red(it) * 3 + Color.green(it) * 6 + Color.blue(it) }
+        return sorted[sorted.size / 2] or 0xFF000000.toInt()
+    }
 
     fun setPage(bmp: Bitmap?, index: Int) {
         page = bmp
@@ -375,6 +405,10 @@ class PlaceView(ctx: Context) : View(ctx) {
                 }
                 lastX = e.x
                 lastY = e.y
+            }
+            MotionEvent.ACTION_UP -> {
+                val s = selected
+                if (s != null && s.spec?.cover == true) onMoved?.invoke(s)
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 // nach dem Zoomen nicht springen: Position des verbleibenden Fingers übernehmen

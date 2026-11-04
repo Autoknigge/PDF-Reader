@@ -36,6 +36,8 @@ interface SignHost {
     fun sign(placements: List<Placement>, progress: (Int) -> Unit): SignResult
     fun showDone(result: SignResult)
     fun pickPhoto()
+    /** Läuft im Hintergrund. Breite der Seite [index] in Punkt (1/72 Zoll). */
+    fun pageWidthPt(index: Int): Float
 }
 
 /** Gemeinsame Oberfläche zum Unterschreiben: Unterschriften verwalten, Foto, Datum/Ort, Seite mit Verschieben. */
@@ -58,6 +60,8 @@ class SignController(private val act: AppCompatActivity, private val host: SignH
     private val placements = ArrayList<Placement>()
     private var cur: Bitmap? = null
     private var photoBmp: Bitmap? = null
+    private val widths = java.util.concurrent.ConcurrentHashMap<Int, Float>()
+    private fun pageW(i: Int): Float = widths[i] ?: 595f
 
     private val place: PlaceView
     private val tvFile: TextView
@@ -118,6 +122,8 @@ class SignController(private val act: AppCompatActivity, private val host: SignH
             placements = this@SignController.placements
             onSelect = { updateControls() }
             onResize = { p -> setSeek(p) }
+            onTextScale = { p, f -> scaleText(p, f, true) }
+            onMoved = { p -> rebuild(p) }
         }
         view.addView(place, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = dp(8) })
 
@@ -142,7 +148,11 @@ class SignController(private val act: AppCompatActivity, private val host: SignH
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, user: Boolean) {
                     if (!user || updatingSeek) return
-                    place.selected?.let { it.w = 0.06f + 0.84f * p / 100f; place.invalidate() }
+                    place.selected?.let {
+                        val nw = 0.06f + 0.84f * p / 100f
+                        if (it.spec != null) scaleText(it, nw / it.w, false) else it.w = nw
+                        place.invalidate()
+                    }
                 }
                 override fun onStartTrackingTouch(s: SeekBar) {}
                 override fun onStopTrackingTouch(s: SeekBar) {}
@@ -163,6 +173,9 @@ class SignController(private val act: AppCompatActivity, private val host: SignH
         row2.addView(darkButton("🖼  Aus Foto") { host.pickPhoto() }, LinearLayout.LayoutParams(0, WRAP, 1f).apply { rightMargin = dp(6) })
         row2.addView(darkButton("📅  Datum / Ort") { showDateDialog() }, LinearLayout.LayoutParams(0, WRAP, 1f))
         view.addView(row2, LinearLayout.LayoutParams(MATCH, WRAP))
+        val row3 = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(14), dp(6), dp(14), 0) }
+        row3.addView(darkButton("✎  Text schreiben / korrigieren") { showTextDialog() }, LinearLayout.LayoutParams(0, WRAP, 1f))
+        view.addView(row3, LinearLayout.LayoutParams(MATCH, WRAP))
 
         btnSave = text("Speichern", 20f, act.resources.getColor(R.color.auf_gold, act.theme), true).apply {
             gravity = Gravity.CENTER
@@ -208,6 +221,7 @@ class SignController(private val act: AppCompatActivity, private val host: SignH
         val idx = pageIdx
         worker.execute {
             val bmp = runCatching { host.render(idx) }
+            widths[idx] = runCatching { host.pageWidthPt(idx) }.getOrDefault(595f)
             act.runOnUiThread {
                 if (act.isFinishing || act.isDestroyed || idx != pageIdx) return@runOnUiThread
                 bmp.onSuccess { place.setPage(it, idx) }.onFailure { toast("Seite konnte nicht angezeigt werden") }
@@ -414,6 +428,103 @@ class SignController(private val act: AppCompatActivity, private val host: SignH
         updateControls()
     }
 
+    // ------------------------------------------------------------------ Text schreiben und korrigieren
+
+    private fun fmt(v: Float): String = if (v == v.toInt().toFloat()) v.toInt().toString() else String.format(Locale.GERMANY, "%.1f", v)
+
+    /** Baut Vorschau und Breite des Textes neu auf; deckt der Text ab, wird die Hintergrundfarbe der Seite aufgenommen. */
+    private fun rebuild(p: Placement) {
+        var sp = p.spec ?: return
+        var r = TextEdit.render(act, sp, pageW(p.page))
+        p.bmp = r.first
+        p.w = r.second
+        if (sp.cover) {
+            sp = sp.with(bg = place.sampleBg(p))
+            p.spec = sp
+            r = TextEdit.render(act, sp, pageW(p.page))
+            p.bmp = r.first
+            p.w = r.second
+        }
+        place.invalidate()
+    }
+
+    private fun scaleText(p: Placement, factor: Float, updateSeek: Boolean) {
+        val sp = p.spec ?: return
+        p.spec = sp.with(size = (sp.size * factor).coerceIn(4f, 96f))
+        rebuild(p)
+        if (updateSeek) setSeek(p)
+    }
+
+    private fun showTextDialog() {
+        if (!hasFile) return toast(if (host.canPick) "Wähle zuerst ein Formular." else "Bitte kurz warten, die Seite lädt.")
+        val old = place.selected?.takeIf { it.spec != null }
+        val s0 = old?.spec
+        val box = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        val et = EditText(act).apply {
+            hint = "Text (mehrere Zeilen möglich)"
+            setText(s0?.text ?: "")
+            minLines = 3
+            gravity = Gravity.TOP or Gravity.START
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        val size = EditText(act).apply {
+            hint = "Größe in Punkt (Fließtext der Analysen: 11,5)"
+            setText(fmt(s0?.size ?: 11.5f))
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val comic = android.widget.CheckBox(act).apply { text = "Schrift Comic Neue (wie in den Analysen)"; isChecked = s0?.comic ?: true }
+        val bold = android.widget.CheckBox(act).apply { text = "Fett"; isChecked = s0?.bold ?: false }
+        val colors = android.widget.Spinner(act).apply {
+            adapter = android.widget.ArrayAdapter(act, android.R.layout.simple_spinner_dropdown_item, TextEdit.COLORS.map { it.first })
+            setSelection(TextEdit.COLORS.indexOfFirst { it.second == s0?.color }.coerceAtLeast(0))
+        }
+        val cover = android.widget.CheckBox(act).apply { text = "Alten Text darunter abdecken (Hintergrundfarbe der Seite)"; isChecked = s0?.cover ?: false }
+        val padLabel = text("Rand um den Text: ${fmt(s0?.pad ?: 3f)} pt (bei Abdeckung: größerer Rand deckt mehr ab)", 12f, 0xFF555555.toInt())
+        val pad = SeekBar(act).apply {
+            max = 60
+            progress = (s0?.pad ?: 3f).toInt().coerceIn(0, 60)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar, p: Int, user: Boolean) { padLabel.text = "Rand um den Text: $p pt (bei Abdeckung: größerer Rand deckt mehr ab)" }
+                override fun onStartTrackingTouch(s: SeekBar) {}
+                override fun onStopTrackingTouch(s: SeekBar) {}
+            })
+        }
+        box.addView(et)
+        box.addView(size)
+        box.addView(comic)
+        box.addView(bold)
+        box.addView(colors)
+        box.addView(cover)
+        box.addView(padLabel, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
+        box.addView(pad)
+        box.addView(text("Tipp: Nur abdecken, ohne neuen Text? Das Textfeld leer lassen (oder nur Leerzeilen) und „Abdecken“ ankreuzen. Die Größe bestimmt dann die Höhe des Feldes.", 12f, 0xFF555555.toInt()), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
+        AlertDialog.Builder(act)
+            .setTitle(if (old != null) "Text ändern" else "Text schreiben")
+            .setView(ScrollView(act).apply { addView(box) })
+            .setPositiveButton("Übernehmen") { _, _ ->
+                val t = TextEdit.clean(et.text.toString()).trimEnd('\n')
+                if (t.isBlank() && !cover.isChecked) return@setPositiveButton toast("Bitte einen Text eingeben oder „Abdecken“ ankreuzen.")
+                val sz = size.text.toString().replace(',', '.').toFloatOrNull()?.coerceIn(4f, 96f) ?: 11.5f
+                val spec = TextSpec(t, sz, comic.isChecked, bold.isChecked, TextEdit.COLORS[colors.selectedItemPosition].second, cover.isChecked, pad.progress.toFloat(), 0xFFFFFFFF.toInt())
+                if (old != null) {
+                    old.spec = spec
+                    rebuild(old)
+                    setSeek(old)
+                } else {
+                    val tmp = TextEdit.render(act, spec, pageW(pageIdx))
+                    val p = Placement(pageIdx, 0.5f, 0.5f, tmp.second, tmp.first, spec)
+                    placements.add(p)
+                    place.selected = p
+                    rebuild(p)
+                    setSeek(p)
+                    toast("Mit dem Finger auf die Stelle schieben, die du korrigieren willst. Größe: zwei Finger oder Regler.")
+                }
+                updateControls()
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
+
     private fun removeSelected() {
         val s = place.selected ?: return
         placements.remove(s)
@@ -439,12 +550,12 @@ class SignController(private val act: AppCompatActivity, private val host: SignH
         val ready = hasFile && placements.isNotEmpty() && !busy
         btnSave.isEnabled = ready
         btnSave.alpha = if (ready) 1f else 0.5f
-        btnSave.text = if (placements.isEmpty()) "Speichern" else "Speichern (${placements.size} Einfügung${if (placements.size == 1) "" else "en"})"
+        btnSave.text = if (placements.isEmpty()) "Speichern" else "Speichern (${placements.size} Änderung${if (placements.size == 1) "" else "en"})"
     }
 
     private fun save() {
         if (busy || placements.isEmpty()) return
-        val list = placements.map { Placement(it.page, it.cx, it.cy, it.w, it.bmp) }
+        val list = placements.map { Placement(it.page, it.cx, it.cy, it.w, it.bmp, it.spec) }
         busy = true
         val steps = list.map { it.page }.distinct().size
         progress.isIndeterminate = false

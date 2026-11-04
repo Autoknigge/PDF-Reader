@@ -147,6 +147,9 @@ class PageRenderer(file: File) : Closeable {
         if (p.width > 0) p.height.toFloat() / p.width else 1.4142f
     }
 
+    /** Breite der Seite in Punkt (1/72 Zoll), wie sie angezeigt wird. */
+    fun widthPt(index: Int): Float = renderer.openPage(index).use { p -> if (p.width > 0) p.width.toFloat() else 595f }
+
     /** Zeichnet die Seite auf weißem Grund, die Breite hat [widthPx] Pixel. */
     fun render(index: Int, widthPx: Int): Bitmap = renderer.openPage(index).use { page ->
         val w = widthPx.coerceIn(64, 4000)

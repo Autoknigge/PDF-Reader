@@ -31,10 +31,11 @@ object Signer {
         placements: List<Placement>,
         progress: (Int) -> Unit
     ): Result {
-        val name = Docs.fileNameFor(displayName).removeSuffix(".pdf") + "_unterschrieben.pdf"
+        val name = Docs.fileNameFor(displayName).removeSuffix(".pdf") + (if (placements.all { it.spec != null }) "_bearbeitet.pdf" else "_unterschrieben.pdf")
         val byPage = placements.groupBy { it.page }
         return PDDocument.load(file, "", MemoryUsageSetting.setupMixed(48L * 1024 * 1024)).use { doc ->
             val images = IdentityHashMap<Bitmap, PDImageXObject>()
+            val fonts = TextEdit.Fonts(ctx, doc)
             var done = 0
             for ((index, list) in byPage) {
                 val page = doc.getPage(index)
@@ -53,6 +54,11 @@ object Signer {
                 PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
                     cs.transform(m)
                     for (p in list) {
+                        val spec = p.spec
+                        if (spec != null) {
+                            TextEdit.draw(cs, fonts, spec, p.cx, p.cy, vw, vh)
+                            continue
+                        }
                         val img = images.getOrPut(p.bmp) { LosslessFactory.createFromImage(doc, p.bmp) }
                         val sw = p.w * vw
                         val sh = sw * p.bmp.height / p.bmp.width

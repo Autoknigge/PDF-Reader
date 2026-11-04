@@ -37,6 +37,7 @@ class SignActivity : AppCompatActivity(), SignHost {
     override val canPick = false
     override fun pickFile() {}
     override fun pickPhoto() = photoPicker.launch("image/*")
+    override fun pageWidthPt(index: Int): Float = renderer!!.widthPt(index)
 
     override fun render(index: Int): Bitmap = renderer!!.render(index, 1400)
 
@@ -47,7 +48,7 @@ class SignActivity : AppCompatActivity(), SignHost {
 
     override fun showDone(result: SignResult) {
         AlertDialog.Builder(this)
-            .setTitle("PDF unterschrieben")
+            .setTitle("PDF gespeichert")
             .setMessage("Gespeichert in „Downloads/${Signer.FOLDER}“:\n${result.name}")
             .setPositiveButton("Im Reader öffnen") { _, _ ->
                 setResult(RESULT_OK, android.content.Intent().setData(result.uri))
@@ -89,7 +90,7 @@ class SignActivity : AppCompatActivity(), SignHost {
             setOnClickListener { finish() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(TextView(this).apply {
-            text = "PDF unterschreiben"; textSize = 22f; setTextColor(0xFFD4AF37.toInt()); setTypeface(typeface, Typeface.BOLD)
+            text = "Unterschreiben & Text"; textSize = 22f; setTextColor(0xFFD4AF37.toInt()); setTypeface(typeface, Typeface.BOLD)
         })
         root.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         ctl = SignController(this, this)

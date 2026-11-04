@@ -410,7 +410,7 @@ class MainActivity : AppCompatActivity() {
         items.add("📤" to "Senden an …"); actions.add { shareCopy(src) }
         items.add("💾" to "Speichern unter …"); actions.add { saveAs.launch(Docs.fileNameFor(src.name)) }
         items.add("🖨" to "Drucken"); actions.add { printPdf(src) }
-        items.add("✍" to "Unterschreiben …"); actions.add {
+        items.add("✍" to "Unterschreiben / Text …"); actions.add {
             signLauncher.launch(
                 Intent(this, SignActivity::class.java)
                     .putExtra(SignActivity.EXTRA_FILE, src.file.absolutePath)
