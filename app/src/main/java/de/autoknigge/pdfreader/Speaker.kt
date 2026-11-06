@@ -1,6 +1,9 @@
 package de.autoknigge.pdfreader
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -58,6 +61,38 @@ class Speaker(
     private var pendingStart: (() -> Unit)? = null
     private var errorShown = false
 
+    /** Audiofokus: bei Anruf oder anderer Wiedergabe pausieren, nicht einfach weiterreden. */
+    private val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var focusReq: AudioFocusRequest? = null
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+            if (state == State.PLAYING) pause()
+        }
+    }
+
+    private fun takeFocus() {
+        try {
+            val req = focusReq ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setOnAudioFocusChangeListener(focusListener, main)
+                .build().also { focusReq = it }
+            audio.requestAudioFocus(req)
+        } catch (ignored: Exception) {
+        }
+    }
+
+    private fun dropFocus() {
+        try {
+            focusReq?.let { audio.abandonAudioFocusRequest(it) }
+        } catch (ignored: Exception) {
+        }
+    }
+
     /** Vorlesegeschwindigkeit (0,5 = langsam … 2,0 = sehr schnell). */
     var rate: Float = prefs.getFloat("tts_rate", 1.0f)
         private set
@@ -72,6 +107,12 @@ class Speaker(
                     tts?.language = Locale.getDefault()
                 }
                 tts?.setSpeechRate(rate)
+                tts?.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
                 applySavedVoice()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {
@@ -225,6 +266,7 @@ class Speaker(
         scopePage = page
         endBlock = lastBlock
         state = State.PLAYING
+        takeFocus()
         onState(true, page)
         speakPage(page, block)
     }
@@ -234,6 +276,7 @@ class Speaker(
         gen++
         tts?.stop()
         state = State.PAUSED
+        dropFocus()
         onState(false, page)
     }
 
@@ -241,6 +284,7 @@ class Speaker(
         if (state != State.PAUSED) return
         gen++
         state = State.PLAYING
+        takeFocus()
         onState(true, page)
         speakPage(page, block)
     }
@@ -249,6 +293,7 @@ class Speaker(
         gen++
         tts?.stop()
         state = State.IDLE
+        dropFocus()
         onHighlight(-1, null)
         onState(false, page)
     }
@@ -534,6 +579,7 @@ class Speaker(
 
     fun release() {
         gen++
+        dropFocus()
         tts?.stop()
         tts?.shutdown()
         tts = null

@@ -1,10 +1,13 @@
 package de.autoknigge.pdfreader
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
@@ -660,6 +663,21 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Vorlesen ----------
 
+    /** Ab Android 13 braucht die Benachrichtigung („Pause/Stopp“ beim Vorlesen im Hintergrund) eine Erlaubnis; einmal fragen. */
+    private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private fun askNotificationPermission() {
+        if (Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences("pdfreader", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("notif_asked", false)) return
+        prefs.edit().putBoolean("notif_asked", true).apply()
+        try {
+            notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } catch (ignored: Exception) {
+        }
+    }
+
     private fun ensureSpeaker(): Speaker? {
         val file = srcFile ?: return null
         if (speaker == null) {
@@ -667,6 +685,9 @@ class MainActivity : AppCompatActivity() {
                 onState = { playing, page -> runOnUiThread { onSpeakState(playing, page) } },
                 onInfo = { msg -> runOnUiThread { toast(msg) } },
                 onHighlight = { page, boxes -> runOnUiThread { adapter?.setHighlight(page, boxes) } })
+            askNotificationPermission()
+            ReadService.onToggle = { togglePause() }
+            ReadService.onStop = { speaker?.stop() }
         }
         return speaker
     }
@@ -806,6 +827,11 @@ class MainActivity : AppCompatActivity() {
     private fun onSpeakState(playing: Boolean, page: Int) {
         val s = speaker
         if (playing && page != pager.currentItem) pager.setCurrentItem(page, false)
+        when (s?.state) {
+            Speaker.State.PLAYING -> ReadService.show(applicationContext, true, "Seite ${page + 1} wird vorgelesen")
+            Speaker.State.PAUSED -> ReadService.show(applicationContext, false, "Pause – Seite ${page + 1}")
+            else -> ReadService.hide(applicationContext)
+        }
         btnPlayPause.text = if (playing) "⏸" else "▶"
         btnPlayPause.contentDescription = if (playing) "Pause" else "Weiter"
         when (s?.state) {
@@ -818,6 +844,9 @@ class MainActivity : AppCompatActivity() {
     private fun releaseSpeaker() {
         speaker?.release()
         speaker = null
+        ReadService.onToggle = null
+        ReadService.onStop = null
+        ReadService.hide(applicationContext)
         readBar.visibility = View.GONE
     }
 
@@ -880,7 +909,7 @@ class MainActivity : AppCompatActivity() {
         android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show()
 
     override fun onPause() {
-        speaker?.pause()
+        // Vorlesen läuft im Hintergrund weiter (ReadService); nur die Werbung pausiert
         adManager.pause()
         super.onPause()
     }
