@@ -71,6 +71,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val textPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            } catch (ignored: Exception) {
+                try {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (ignored2: Exception) {
+                }
+            }
+            startActivity(Intent(this, TextActivity::class.java).setAction(Intent.ACTION_VIEW).setData(uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+        }
+    }
+
     private val signLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
         val uri = res.data?.data
         if (res.resultCode == RESULT_OK && uri != null) open(uri)
@@ -101,6 +116,12 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnBack).setOnClickListener { goBack() }
         findViewById<View>(R.id.btnOpen).setOnClickListener { pick() }
         findViewById<View>(R.id.btnOpenBig).setOnClickListener { pick() }
+        findViewById<View>(R.id.btnOpenText).setOnClickListener {
+            textPicker.launch(arrayOf("text/*", "application/json", "application/xml"))
+        }
+        findViewById<View>(R.id.btnNewNote).setOnClickListener {
+            startActivity(Intent(this, TextActivity::class.java).putExtra(TextActivity.EXTRA_NEW, true))
+        }
         findViewById<View>(R.id.btnSpeak).setOnClickListener { startSpeaking() }
         findViewById<View>(R.id.btnReadSettings).setOnClickListener { openReadSettings() }
         findViewById<View>(R.id.btnMore).setOnClickListener { openMoreMenu() }
