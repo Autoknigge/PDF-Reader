@@ -6,11 +6,16 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -32,6 +37,7 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
+import java.text.BreakIterator
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -65,6 +71,21 @@ class TextActivity : AppCompatActivity() {
     private var loading = true
     private var ownNote = false      // von der App selbst angelegt: wird automatisch gesichert
     private var lastQuery = ""
+
+    // Vorlesen
+    private enum class Read { IDLE, PLAYING, PAUSED }
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var onTtsReady: (() -> Unit)? = null
+    private var reading = Read.IDLE
+    private var chunks = ArrayList<IntArray>()
+    private var ci = 0
+    private var gen = 0
+    private lateinit var readBar: LinearLayout
+    private lateinit var tvReadStatus: TextView
+    private lateinit var btnPlay: TextView
+    private val audio by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    private var focusReq: AudioFocusRequest? = null
     private var dark = true
     private var sizeSp = 16f
 
@@ -109,6 +130,7 @@ class TextActivity : AppCompatActivity() {
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
         }
         top.addView(tvTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(iconButton("🔊", "Vorlesen") { startReading() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(iconButton("💾", "Speichern") { save() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(iconButton("⋮", "Mehr") { openMenu() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -131,12 +153,27 @@ class TextActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) {
+                if (!loading && reading != Read.IDLE) stopReading()
                 if (!loading && !dirty) {
                     dirty = true
                     updateTitle()
                 }
             }
         })
+
+        readBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(4), dp(8), dp(4))
+            setBackgroundColor(TANNE)
+            visibility = android.view.View.GONE
+        }
+        tvReadStatus = TextView(this).apply { textSize = 14f; setTextColor(CREME) }
+        readBar.addView(tvReadStatus, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        btnPlay = iconButton("⏸", "Pause") { toggleRead() }
+        readBar.addView(btnPlay, LinearLayout.LayoutParams(dp(48), dp(44)))
+        readBar.addView(iconButton("⏹", "Stopp") { stopReading() }, LinearLayout.LayoutParams(dp(48), dp(44)))
+        root.addView(readBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         val adBox = FrameLayout(this).apply {
             setBackgroundResource(R.drawable.bg_ad)
@@ -328,6 +365,7 @@ class TextActivity : AppCompatActivity() {
             "Schrift größer",
             "Schrift kleiner",
             if (dark) "Heller Hintergrund" else "Dunkler Hintergrund",
+            "Vorlesetempo …",
             "Alles markieren und kopieren",
             "Speichern unter …",
             "Teilen / Senden an …"
@@ -341,9 +379,10 @@ class TextActivity : AppCompatActivity() {
                     2 -> setSize(sizeSp + 2f)
                     3 -> setSize(sizeSp - 2f)
                     4 -> { dark = !dark; prefs.edit().putBoolean("text_dunkel", dark).apply(); applyLook() }
-                    5 -> copyAll()
-                    6 -> saveAs.launch(name)
-                    7 -> share()
+                    5 -> tempoDialog()
+                    6 -> copyAll()
+                    7 -> saveAs.launch(name)
+                    8 -> share()
                 }
             }
             .setNegativeButton("Schließen", null)
@@ -445,6 +484,235 @@ class TextActivity : AppCompatActivity() {
 
     private fun toast(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
 
+    // ------------------------------------------------------------------ Vorlesen
+
+    private fun startReading() {
+        if (loading || edit.text.isBlank()) return toast("Es gibt noch nichts zum Vorlesen.")
+        if (reading != Read.IDLE) return
+        ensureTts {
+            val text = edit.text.toString()
+            val from = edit.selectionStart.coerceAtLeast(0)
+            chunks = buildChunks(text, from)
+            if (chunks.isEmpty()) return@ensureTts toast("Es gibt ab hier nichts zum Vorlesen.")
+            ci = 0
+            gen++
+            reading = Read.PLAYING
+            takeFocus()
+            showReadState()
+            speakChunk()
+        }
+    }
+
+    private fun ensureTts(then: () -> Unit) {
+        if (ttsReady) return then()
+        onTtsReady = then
+        if (tts != null) return
+        tts = TextToSpeech(applicationContext) { status ->
+            runOnUiThread {
+                val t = tts
+                if (status != TextToSpeech.SUCCESS || t == null) {
+                    toast("Die Sprachausgabe ist nicht verfügbar.")
+                    tts = null
+                    return@runOnUiThread
+                }
+                val r = t.setLanguage(Locale.GERMAN)
+                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) t.language = Locale.getDefault()
+                t.setSpeechRate(prefs.getFloat("tts_rate", 1.0f))
+                prefs.getString("tts_voice", null)?.let { n ->
+                    try {
+                        t.voices?.firstOrNull { it.name == n }?.let { v -> t.voice = v }
+                    } catch (ignored: Exception) {
+                    }
+                }
+                t.setAudioAttributes(
+                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+                )
+                t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(id: String?) {
+                        val (g, i) = parse(id) ?: return
+                        runOnUiThread { if (g == gen && reading == Read.PLAYING) highlight(i) }
+                    }
+
+                    override fun onDone(id: String?) {
+                        val (g, i) = parse(id) ?: return
+                        runOnUiThread {
+                            if (g != gen || reading != Read.PLAYING) return@runOnUiThread
+                            if (i + 1 < chunks.size) {
+                                ci = i + 1
+                                speakChunk()
+                            } else {
+                                stopReading()
+                            }
+                        }
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(id: String?) {
+                        runOnUiThread { if (reading != Read.IDLE) { toast("Beim Vorlesen ist ein Fehler aufgetreten."); stopReading() } }
+                    }
+                })
+                ttsReady = true
+                onTtsReady?.invoke()
+                onTtsReady = null
+            }
+        }
+    }
+
+    private fun parse(id: String?): Pair<Int, Int>? {
+        if (id == null || !id.startsWith("g")) return null
+        val g = id.substring(1).substringBefore("c").toIntOrNull() ?: return null
+        val i = id.substringAfter("c").toIntOrNull() ?: return null
+        return g to i
+    }
+
+    /** Zerlegt den Text ab Position [from] in Sätze und fasst sie zu Stücken von etwa 300 Zeichen zusammen. */
+    private fun buildChunks(text: String, from: Int): ArrayList<IntArray> {
+        val out = ArrayList<IntArray>()
+        val max = TextToSpeech.getMaxSpeechInputLength().coerceAtMost(3000)
+        val bi = BreakIterator.getSentenceInstance(Locale.GERMAN)
+        bi.setText(text)
+        val bounds = ArrayList<Int>()
+        var b = bi.first()
+        while (b != BreakIterator.DONE) {
+            bounds.add(b)
+            b = bi.next()
+        }
+        var curStart = -1
+        var curEnd = -1
+        fun flush() {
+            if (curStart >= 0 && text.substring(curStart, curEnd).isNotBlank()) out.add(intArrayOf(curStart, curEnd))
+            curStart = -1
+        }
+        for (k in 0 until bounds.size - 1) {
+            var s = bounds[k]
+            val e = bounds[k + 1]
+            if (e <= from) continue
+            if (s < from) s = from
+            // sehr lange Sätze hart teilen
+            var p = s
+            while (p < e) {
+                val q = minOf(e, p + max)
+                if (curStart < 0) { curStart = p; curEnd = q } else curEnd = q
+                p = q
+                if (curEnd - curStart >= 300) flush()
+            }
+        }
+        flush()
+        return out
+    }
+
+    private fun speakChunk() {
+        val t = tts ?: return
+        if (ci >= chunks.size) return stopReading()
+        val c = chunks[ci]
+        val s = edit.text.toString().substring(c[0], c[1])
+        t.speak(s, TextToSpeech.QUEUE_FLUSH, null, "g${gen}c$ci")
+    }
+
+    private fun highlight(i: Int) {
+        if (i >= chunks.size) return
+        val c = chunks[i]
+        try {
+            edit.setSelection(c[0], c[1])
+        } catch (ignored: Exception) {
+        }
+    }
+
+    private fun toggleRead() {
+        when (reading) {
+            Read.PLAYING -> {
+                gen++
+                tts?.stop()
+                reading = Read.PAUSED
+                dropFocus()
+                showReadState()
+            }
+            Read.PAUSED -> {
+                gen++
+                reading = Read.PLAYING
+                takeFocus()
+                showReadState()
+                speakChunk()
+            }
+            else -> {}
+        }
+    }
+
+    private fun stopReading() {
+        gen++
+        tts?.stop()
+        val was = reading
+        reading = Read.IDLE
+        dropFocus()
+        if (was != Read.IDLE || readBar.visibility == android.view.View.VISIBLE) showReadState()
+    }
+
+    private fun showReadState() {
+        when (reading) {
+            Read.PLAYING -> {
+                readBar.visibility = android.view.View.VISIBLE
+                tvReadStatus.text = "Wird vorgelesen"
+                btnPlay.text = "⏸"
+                ReadService.onToggle = { toggleRead() }
+                ReadService.onStop = { stopReading() }
+                ReadService.show(applicationContext, true, "$name wird vorgelesen")
+            }
+            Read.PAUSED -> {
+                readBar.visibility = android.view.View.VISIBLE
+                tvReadStatus.text = "Pause"
+                btnPlay.text = "▶"
+                ReadService.show(applicationContext, false, "Pause – $name")
+            }
+            Read.IDLE -> {
+                readBar.visibility = android.view.View.GONE
+                ReadService.onToggle = null
+                ReadService.onStop = null
+                ReadService.hide(applicationContext)
+            }
+        }
+    }
+
+    private fun tempoDialog() {
+        val labels = arrayOf("Langsam (0,75)", "Normal (1,0)", "Etwas schneller (1,25)", "Schnell (1,5)", "Sehr schnell (2,0)")
+        val values = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+        AlertDialog.Builder(this)
+            .setTitle("Vorlesetempo")
+            .setItems(labels) { _, which ->
+                prefs.edit().putFloat("tts_rate", values[which]).apply()
+                tts?.setSpeechRate(values[which])
+                if (reading == Read.PLAYING) {
+                    gen++
+                    speakChunk()
+                }
+            }
+            .setNegativeButton("Schließen", null)
+            .show()
+    }
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if ((change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) && reading == Read.PLAYING) {
+            runOnUiThread { toggleRead() }
+        }
+    }
+
+    private fun takeFocus() {
+        try {
+            val req = focusReq ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setOnAudioFocusChangeListener(focusListener)
+                .build().also { focusReq = it }
+            audio.requestAudioFocus(req)
+        } catch (ignored: Exception) {
+        }
+    }
+
+    private fun dropFocus() {
+        try {
+            focusReq?.let { audio.abandonAudioFocusRequest(it) }
+        } catch (ignored: Exception) {
+        }
+    }
+
     // ------------------------------------------------------------------ Lebenszyklus
 
     override fun onPause() {
@@ -460,6 +728,9 @@ class TextActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        stopReading()
+        tts?.shutdown()
+        tts = null
         adManager.destroy()
         worker.shutdown()
         super.onDestroy()
