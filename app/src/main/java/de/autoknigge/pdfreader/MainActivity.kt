@@ -117,7 +117,12 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnOpen).setOnClickListener { pick() }
         findViewById<View>(R.id.btnOpenBig).setOnClickListener { pick() }
         findViewById<View>(R.id.btnOpenText).setOnClickListener {
-            textPicker.launch(arrayOf("text/*", "application/json", "application/xml"))
+            textPicker.launch(arrayOf(
+                "text/*", "application/json", "application/xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.oasis.opendocument.text", "application/epub+zip",
+                "application/rtf", "application/xhtml+xml", "application/octet-stream"
+            ))
         }
         findViewById<View>(R.id.btnNewNote).setOnClickListener {
             startActivity(Intent(this, TextActivity::class.java).putExtra(TextActivity.EXTRA_NEW, true))

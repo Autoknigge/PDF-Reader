@@ -71,6 +71,7 @@ class TextActivity : AppCompatActivity() {
     private var loading = true
     private var ownNote = false      // von der App selbst angelegt: wird automatisch gesichert
     private var lastQuery = ""
+    private var converted = false    // aus Word/EPUB/HTML/... umgewandelt: das Original wird nie überschrieben
 
     // Vorlesen
     private enum class Read { IDLE, PLAYING, PAUSED }
@@ -95,6 +96,7 @@ class TextActivity : AppCompatActivity() {
                 uri = u
                 name = queryName(u) ?: name
                 ownNote = false
+                converted = false
                 dirty = false
                 updateTitle()
                 toast("Gespeichert.")
@@ -224,9 +226,12 @@ class TextActivity : AppCompatActivity() {
     private fun openFile(u: Uri) {
         uri = u
         name = queryName(u) ?: (u.lastPathSegment?.substringAfterLast('/') ?: "Text.txt")
+        val kind = DocConverter.kindOf(name, contentResolver.getType(u))
+        converted = kind != DocConverter.Kind.TEXT
+        if (converted) name = name.substringBeforeLast('.', name) + ".txt"
         updateTitle()
         worker.execute {
-            val result = runCatching { readText(u) }
+            val result = runCatching { if (converted) convertDoc(u, kind) else readText(u) }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 result.onSuccess { t ->
@@ -236,12 +241,19 @@ class TextActivity : AppCompatActivity() {
                     loading = false
                     dirty = false
                     updateTitle()
+                    if (converted) toast("Nur der Text wurde übernommen. Speichern legt eine neue .txt an, das Original bleibt unverändert.")
                 }.onFailure {
                     toast(it.message ?: "Die Datei konnte nicht gelesen werden.")
                     finish()
                 }
             }
         }
+    }
+
+    private fun convertDoc(u: Uri, kind: DocConverter.Kind): String {
+        val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
+            ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
+        return DocConverter.convert(kind, bytes)
     }
 
     private fun readText(u: Uri): String {
@@ -284,6 +296,10 @@ class TextActivity : AppCompatActivity() {
         if (loading) return
         val text = edit.text.toString()
         if (ownNote && uri == null && text.isEmpty()) return
+        if (converted) {
+            if (!quiet) saveAs.launch(name)
+            return
+        }
         var target = uri
         if (target == null) {
             target = createNoteFile()
