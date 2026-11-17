@@ -71,6 +71,15 @@ class TextActivity : AppCompatActivity() {
     private var loading = true
     private var ownNote = false      // von der App selbst angelegt: wird automatisch gesichert
     private var lastQuery = ""
+    private var sheets: List<DocConverter.Sheet>? = null
+    private var tableMode = false
+    private var sheetNo = 0
+    private var shownRows = 0
+    private lateinit var scroll: ScrollView
+    private lateinit var tableBox: LinearLayout
+    private lateinit var sheetTabs: LinearLayout
+    private lateinit var tableGrid: android.widget.TableLayout
+    private lateinit var btnMore: TextView
     private var converted = false    // aus Word/EPUB/HTML/... umgewandelt: das Original wird nie überschrieben
 
     // Vorlesen
@@ -147,8 +156,10 @@ class TextActivity : AppCompatActivity() {
             hint = "Hier schreiben …"
             isEnabled = false
         }
-        val scroll = ScrollView(this).apply { isFillViewport = true; addView(edit, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) }
+        scroll = ScrollView(this).apply { isFillViewport = true; addView(edit, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) }
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        buildTableUi()
+        root.addView(tableBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         applyLook()
 
         edit.addTextChangedListener(object : TextWatcher {
@@ -231,7 +242,15 @@ class TextActivity : AppCompatActivity() {
         if (converted) name = name.substringBeforeLast('.', name) + ".txt"
         updateTitle()
         worker.execute {
-            val result = runCatching { if (converted) convertDoc(u, kind) else readText(u) }
+            var sh: List<DocConverter.Sheet>? = null
+            val result = runCatching {
+                if (DocConverter.isSheet(kind)) {
+                    val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
+                        ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
+                    sh = DocConverter.sheets(kind, bytes)
+                    DocConverter.sheetsToText(sh!!)
+                } else if (converted) convertDoc(u, kind) else readText(u)
+            }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 result.onSuccess { t ->
@@ -241,6 +260,8 @@ class TextActivity : AppCompatActivity() {
                     loading = false
                     dirty = false
                     updateTitle()
+                    sheets = sh
+                    if (sh != null) { sheetNo = 0; showTable(true) }
                     if (converted) toast("Nur der Text wurde übernommen. Speichern legt eine neue .txt an, das Original bleibt unverändert.")
                 }.onFailure {
                     toast(it.message ?: "Die Datei konnte nicht gelesen werden.")
@@ -385,7 +406,7 @@ class TextActivity : AppCompatActivity() {
             "Alles markieren und kopieren",
             "Speichern unter …",
             "Teilen / Senden an …"
-        )
+        ) + (if (sheets != null) arrayOf(if (tableMode) "Als Text anzeigen" else "Als Tabelle anzeigen") else emptyArray())
         AlertDialog.Builder(this)
             .setTitle(name)
             .setItems(items) { _, which ->
@@ -399,6 +420,7 @@ class TextActivity : AppCompatActivity() {
                     6 -> copyAll()
                     7 -> saveAs.launch(name)
                     8 -> share()
+                    9 -> showTable(!tableMode)
                 }
             }
             .setNegativeButton("Schließen", null)
@@ -450,7 +472,93 @@ class TextActivity : AppCompatActivity() {
         applyLook()
     }
 
+    // ------------------------------------------------------------------ Tabellenansicht
+
+    private fun buildTableUi() {
+        tableBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE }
+        sheetTabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), dp(2), dp(8), dp(2)) }
+        tableBox.addView(
+            android.widget.HorizontalScrollView(this).apply { addView(sheetTabs); isHorizontalScrollBarEnabled = false; setBackgroundColor(TANNE) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        tableGrid = android.widget.TableLayout(this)
+        btnMore = TextView(this).apply {
+            text = "Weitere Zeilen laden"
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(14), dp(12), dp(14))
+            setTextColor(GOLD)
+            visibility = android.view.View.GONE
+            setOnClickListener { addRows(500) }
+        }
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(tableGrid)
+            addView(btnMore)
+        }
+        val h = android.widget.HorizontalScrollView(this).apply { addView(inner) }
+        val v = ScrollView(this).apply { addView(h, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT) }
+        tableBox.addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun showTable(on: Boolean) {
+        val list = sheets
+        tableMode = on && list != null
+        scroll.visibility = if (tableMode) android.view.View.GONE else android.view.View.VISIBLE
+        tableBox.visibility = if (tableMode) android.view.View.VISIBLE else android.view.View.GONE
+        if (tableMode) renderSheet()
+    }
+
+    private fun renderSheet() {
+        val list = sheets ?: return
+        tableBox.setBackgroundColor(if (dark) TANNE_DUNKEL else 0xFFFFFFFF.toInt())
+        sheetTabs.removeAllViews()
+        sheetTabs.visibility = if (list.size > 1) android.view.View.VISIBLE else android.view.View.GONE
+        list.forEachIndexed { i, sh ->
+            sheetTabs.addView(TextView(this).apply {
+                text = sh.name
+                textSize = 14f
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                setTextColor(if (i == sheetNo) TANNE_DUNKEL else CREME)
+                setBackgroundColor(if (i == sheetNo) GOLD else TANNE)
+                setOnClickListener { sheetNo = i; renderSheet() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(4) })
+        }
+        tableGrid.removeAllViews()
+        shownRows = 0
+        addRows(500)
+    }
+
+    private fun addRows(n: Int) {
+        val rows = sheets?.getOrNull(sheetNo)?.rows ?: return
+        val grid = if (dark) 0xFF3A4A3F.toInt() else 0xFFBBBBBB.toInt()
+        val fg = if (dark) CREME else 0xFF111111.toInt()
+        val bg = if (dark) TANNE_DUNKEL else 0xFFFFFFFF.toInt()
+        val end = minOf(rows.size, shownRows + n)
+        for (r in shownRows until end) {
+            val tr = android.widget.TableRow(this).apply { setBackgroundColor(grid) }
+            for (c in rows[r]) {
+                tr.addView(TextView(this).apply {
+                    text = c
+                    textSize = (sizeSp - 2f).coerceAtLeast(10f)
+                    setTextColor(if (r == 0) GOLD else fg)
+                    if (r == 0) setTypeface(typeface, Typeface.BOLD)
+                    setBackgroundColor(bg)
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    maxWidth = dp(240)
+                    minWidth = dp(56)
+                    setTextIsSelectable(false)
+                }, android.widget.TableRow.LayoutParams().apply { setMargins(dp(1), dp(1), 0, 0) })
+            }
+            tableGrid.addView(tr)
+        }
+        shownRows = end
+        btnMore.visibility = if (shownRows < rows.size) android.view.View.VISIBLE else android.view.View.GONE
+        btnMore.text = "Weitere Zeilen laden (" + (rows.size - shownRows) + " übrig)"
+    }
+
     private fun applyLook() {
+        if (::tableBox.isInitialized && tableMode) renderSheet()
         edit.textSize = sizeSp
         edit.setTextColor(if (dark) CREME else 0xFF111111.toInt())
         edit.setHintTextColor(if (dark) 0xFFCFC38E.toInt() else 0xFF777777.toInt())
@@ -503,6 +611,7 @@ class TextActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ Vorlesen
 
     private fun startReading() {
+        if (tableMode) showTable(false)
         if (loading || edit.text.isBlank()) return toast("Es gibt noch nichts zum Vorlesen.")
         if (reading != Read.IDLE) return
         ensureTts {

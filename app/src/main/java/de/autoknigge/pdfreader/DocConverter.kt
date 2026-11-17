@@ -55,8 +55,7 @@ object DocConverter {
         val text = when (kind) {
             Kind.DOCX -> docx(bytes)
             Kind.ODT -> odt(bytes)
-            Kind.XLSX -> xlsx(bytes)
-            Kind.ODS -> ods(bytes)
+            Kind.XLSX, Kind.ODS -> sheetsToText(sheets(kind, bytes))
             Kind.EPUB -> epub(bytes)
             Kind.HTML -> html(decode(bytes))
             Kind.RTF -> rtf(decode(bytes))
@@ -178,10 +177,53 @@ object DocConverter {
 
     // ---------------------------------------------------------------- Tabellen
 
-    private fun xlsx(bytes: ByteArray): String {
+    class Sheet(val name: String, val rows: List<List<String>>)
+
+    private const val MAX_ROWS = 20000
+    private const val MAX_COLS = 80
+
+    fun isSheet(k: Kind) = k == Kind.XLSX || k == Kind.ODS
+
+    fun sheets(kind: Kind, bytes: ByteArray): List<Sheet> {
+        val list = if (kind == Kind.XLSX) xlsxSheets(bytes) else odsSheets(bytes)
+        if (list.all { it.rows.isEmpty() }) throw IOException("In dieser Datei wurde keine Tabelle gefunden.")
+        return list
+    }
+
+    fun sheetsToText(list: List<Sheet>): String {
+        val sb = StringBuilder()
+        for (sh in list) {
+            if (sh.rows.isEmpty()) continue
+            if (list.size > 1) sb.append("Blatt: ").append(sh.name).append("\n\n")
+            for (r in sh.rows) {
+                val cells = r.filter { it.isNotBlank() }
+                if (cells.isNotEmpty()) sb.append(cells.joinToString("; ")).append('\n')
+            }
+            sb.append("\n\n")
+            if (sb.length > MAX_TEXT) break
+        }
+        return sb.toString()
+    }
+
+    private fun colIndex(ref: String?): Int {
+        if (ref == null) return -1
+        var n = 0
+        var any = false
+        for (ch in ref) {
+            if (ch in 'A'..'Z') { n = n * 26 + (ch - 'A' + 1); any = true } else if (ch in 'a'..'z') { n = n * 26 + (ch - 'a' + 1); any = true } else break
+        }
+        return if (any) n - 1 else -1
+    }
+
+    private fun setCell(row: ArrayList<String>, col: Int, v: String) {
+        if (col < 0 || col >= MAX_COLS) return
+        while (row.size <= col) row.add("")
+        row[col] = v
+    }
+
+    private fun xlsxSheets(bytes: ByteArray): List<Sheet> {
         val files = unzip(bytes)
         val wb = files["xl/workbook.xml"] ?: throw IOException("Das ist keine gültige Excel-Datei.")
-        // gemeinsame Texte
         val shared = ArrayList<String>()
         files["xl/sharedStrings.xml"]?.let { b ->
             val p = parser(b)
@@ -203,7 +245,6 @@ object DocConverter {
                 ev = p.next()
             }
         }
-        // Blattnamen und Dateien
         val rels = HashMap<String, String>()
         files["xl/_rels/workbook.xml.rels"]?.let { b ->
             val p = parser(b)
@@ -216,38 +257,41 @@ object DocConverter {
                 ev = p.next()
             }
         }
-        val sheets = ArrayList<Pair<String, String>>()
+        val defs = ArrayList<Pair<String, String>>()
         parser(wb).let { p ->
             var ev = p.eventType
             while (ev != XmlPullParser.END_DOCUMENT) {
                 if (ev == XmlPullParser.START_TAG && ln(p) == "sheet") {
                     val name = attr(p, "name") ?: "Blatt"
-                    val rid = attr(p, "id")
-                    val target = rid?.let { rels[it] }
+                    val target = attr(p, "id")?.let { rels[it] }
                     if (target != null) {
                         val path = if (target.startsWith("/")) target.trimStart('/') else resolve("xl/", target)
-                        sheets.add(name to path)
+                        defs.add(name to path)
                     }
                 }
                 ev = p.next()
             }
         }
-        val sb = StringBuilder()
-        for ((name, path) in sheets) {
+        val result = ArrayList<Sheet>()
+        for ((name, path) in defs) {
             val data = files[path] ?: continue
-            if (sheets.size > 1) sb.append("Blatt: ").append(name).append("\n\n")
+            val rows = ArrayList<List<String>>()
             val p = parser(data)
             var ev = p.eventType
-            val row = ArrayList<String>()
+            var row = ArrayList<String>()
             var type: String? = null
+            var col = 0
             var inV = false
             var inT = false
             val cell = StringBuilder()
             while (ev != XmlPullParser.END_DOCUMENT) {
                 when (ev) {
                     XmlPullParser.START_TAG -> when (ln(p)) {
-                        "row" -> row.clear()
-                        "c" -> { type = attr(p, "t"); cell.setLength(0) }
+                        "row" -> row = ArrayList()
+                        "c" -> {
+                            type = attr(p, "t"); cell.setLength(0)
+                            val c = colIndex(attr(p, "r")); if (c >= 0) col = c
+                        }
                         "v" -> inV = true
                         "t" -> inT = true
                     }
@@ -258,37 +302,42 @@ object DocConverter {
                             var v = cell.toString()
                             if (type == "s") v = v.trim().toIntOrNull()?.let { shared.getOrNull(it) } ?: ""
                             else if (type == "b") v = if (v.trim() == "1") "wahr" else "falsch"
-                            if (v.isNotBlank()) row.add(v.trim())
+                            if (v.isNotBlank()) setCell(row, col, v.trim())
+                            col++
                         }
-                        "row" -> if (row.isNotEmpty()) sb.append(row.joinToString("; ")).append('\n')
+                        "row" -> if (rows.size < MAX_ROWS) rows.add(row)
                     }
                     XmlPullParser.TEXT -> if (inV || inT) cell.append(p.text)
                 }
                 ev = p.next()
             }
-            sb.append("\n\n")
-            if (sb.length > MAX_TEXT) break
+            result.add(Sheet(name, trimRows(rows)))
         }
-        return sb.toString()
+        return result
     }
 
-    private fun ods(bytes: ByteArray): String {
+    private fun odsSheets(bytes: ByteArray): List<Sheet> {
         val files = unzip(bytes)
         val doc = files["content.xml"] ?: throw IOException("Das ist keine gültige Tabellen-Datei.")
-        val sb = StringBuilder()
+        val result = ArrayList<Sheet>()
         val p = parser(doc)
         var ev = p.eventType
-        val row = ArrayList<String>()
+        var rows = ArrayList<List<String>>()
+        var name = "Blatt"
+        var row = ArrayList<String>()
+        var rowRep = 1
         val cell = StringBuilder()
         var inCell = false
-        var tables = 0
-        var pending: String? = null
+        var col = 0
+        var colRep = 1
+        var inTable = false
         while (ev != XmlPullParser.END_DOCUMENT) {
             when (ev) {
                 XmlPullParser.START_TAG -> when (ln(p)) {
-                    "table" -> { tables++; pending = attr(p, "name") }
-                    "table-row" -> row.clear()
-                    "table-cell", "covered-table-cell" -> { inCell = true; cell.setLength(0) }
+                    "table" -> { inTable = true; name = attr(p, "name") ?: "Blatt"; rows = ArrayList() }
+                    "table-row" -> { row = ArrayList(); col = 0; rowRep = attr(p, "number-rows-repeated")?.toIntOrNull() ?: 1 }
+                    "table-cell" -> { inCell = true; cell.setLength(0); colRep = attr(p, "number-columns-repeated")?.toIntOrNull() ?: 1 }
+                    "covered-table-cell" -> { inCell = true; cell.setLength(0); colRep = 1 }
                     "tab" -> if (inCell) cell.append('\t')
                     "line-break" -> if (inCell) cell.append(' ')
                 }
@@ -297,19 +346,31 @@ object DocConverter {
                     "table-cell", "covered-table-cell" -> {
                         inCell = false
                         val v = cell.toString().trim()
-                        if (v.isNotEmpty()) row.add(v)
+                        if (v.isNotEmpty()) {
+                            for (k in 0 until minOf(colRep, 20)) setCell(row, col + k, v)
+                        }
+                        col += colRep
                     }
-                    "table-row" -> if (row.isNotEmpty()) {
-                        pending?.let { if (tables > 1) sb.append("\nBlatt: ").append(it).append("\n\n"); pending = null }
-                        sb.append(row.joinToString("; ")).append('\n')
+                    "table-row" -> if (inTable && rows.size < MAX_ROWS) {
+                        val n = if (row.any { it.isNotBlank() }) minOf(rowRep, 20) else 1
+                        repeat(n) { rows.add(row) }
                     }
+                    "table" -> { result.add(Sheet(name, trimRows(rows))); inTable = false }
                 }
                 XmlPullParser.TEXT -> if (inCell) cell.append(p.text)
             }
             ev = p.next()
-            if (sb.length > MAX_TEXT) break
         }
-        return sb.toString()
+        return result
+    }
+
+    /** Leere Zeilen am Ende entfernen und alle Zeilen auf gleiche Spaltenzahl bringen. */
+    private fun trimRows(rows: List<List<String>>): List<List<String>> {
+        var end = rows.size
+        while (end > 0 && rows[end - 1].none { it.isNotBlank() }) end--
+        val cut = rows.subList(0, end)
+        val cols = cut.maxOfOrNull { it.size } ?: 0
+        return cut.map { r -> if (r.size < cols) r + List(cols - r.size) { "" } else r }
     }
 
     // ---------------------------------------------------------------- EPUB
