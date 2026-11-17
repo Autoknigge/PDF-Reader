@@ -121,7 +121,9 @@ class MainActivity : AppCompatActivity() {
                 "text/*", "application/json", "application/xml",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "application/vnd.oasis.opendocument.text", "application/epub+zip",
-                "application/rtf", "application/xhtml+xml", "application/octet-stream"
+                "application/rtf", "application/xhtml+xml",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.oasis.opendocument.spreadsheet", "application/octet-stream"
             ))
         }
         findViewById<View>(R.id.btnNewNote).setOnClickListener {
