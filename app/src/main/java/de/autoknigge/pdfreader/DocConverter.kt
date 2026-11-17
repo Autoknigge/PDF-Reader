@@ -166,12 +166,14 @@ object DocConverter {
         var inT = false
         var bold = false
         var italic = false
+        var underline = false
+        var strike = false
         fun add(t: String) {
             if (t.isEmpty()) return
             val last = runs.lastOrNull()
-            if (last != null && last.bold == bold && last.italic == italic) {
-                runs[runs.size - 1] = RichRun(last.text + t, bold, italic)
-            } else runs.add(RichRun(t, bold, italic))
+            if (last != null && last.bold == bold && last.italic == italic && last.underline == underline && last.strike == strike) {
+                runs[runs.size - 1] = RichRun(last.text + t, bold, italic, underline, strike)
+            } else runs.add(RichRun(t, bold, italic, underline, strike))
         }
         fun on(v: String?) = v == null || (v != "0" && v != "false")
         while (ev != XmlPullParser.END_DOCUMENT) {
@@ -188,9 +190,11 @@ object DocConverter {
                         }
                     }
                     "numPr" -> if (inPPr) bullet = true
-                    "r" -> { inRun = true; bold = false; italic = false }
+                    "r" -> { inRun = true; bold = false; italic = false; underline = false; strike = false }
                     "b" -> if (inRun && !inPPr) bold = on(attr(p, "val"))
                     "i" -> if (inRun && !inPPr) italic = on(attr(p, "val"))
+                    "u" -> if (inRun && !inPPr) underline = (attr(p, "val") ?: "single") != "none"
+                    "strike", "dstrike" -> if (inRun && !inPPr) strike = on(attr(p, "val"))
                     "t" -> inT = true
                     "tab" -> if (inRun) add("\t")
                     "br", "cr" -> if (inRun) add("\n")

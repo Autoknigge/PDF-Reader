@@ -5,7 +5,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /** Ein Textabschnitt mit gleicher Formatierung. */
-class RichRun(val text: String, val bold: Boolean, val italic: Boolean)
+class RichRun(val text: String, val bold: Boolean, val italic: Boolean, val underline: Boolean = false, val strike: Boolean = false)
 
 /** Ein Absatz: level 0 = normal, 1 = Überschrift, 2 = Unterüberschrift; bullet = Listenpunkt. */
 class RichPara(val level: Int, val bullet: Boolean, val runs: List<RichRun>)
@@ -36,10 +36,12 @@ object DocxWriter {
             if (i > 0) sb.append("<w:r><w:tab/></w:r>")
             if (part.isNotEmpty()) {
                 sb.append("<w:r>")
-                if (r.bold || r.italic) {
+                if (r.bold || r.italic || r.underline || r.strike) {
                     sb.append("<w:rPr>")
                     if (r.bold) sb.append("<w:b/>")
                     if (r.italic) sb.append("<w:i/>")
+                    if (r.strike) sb.append("<w:strike/>")
+                    if (r.underline) sb.append("<w:u w:val=\"single\"/>")
                     sb.append("</w:rPr>")
                 }
                 sb.append("<w:t xml:space=\"preserve\">").append(esc(part)).append("</w:t></w:r>")

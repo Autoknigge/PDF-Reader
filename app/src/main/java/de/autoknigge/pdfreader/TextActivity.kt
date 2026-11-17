@@ -28,7 +28,9 @@ import android.text.SpannableStringBuilder
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.RelativeSizeSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
+import android.text.style.UnderlineSpan
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
@@ -212,6 +214,8 @@ class TextActivity : AppCompatActivity() {
         }
         fmtBar.addView(iconButton("B", "Fett") { toggleStyle(Tf.BOLD) }.apply { setTypeface(Tf.DEFAULT_BOLD) }, LinearLayout.LayoutParams(dp(48), dp(40)))
         fmtBar.addView(iconButton("I", "Kursiv") { toggleStyle(Tf.ITALIC) }.apply { setTypeface(Tf.DEFAULT, Tf.ITALIC) }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        fmtBar.addView(iconButton("U", "Unterstreichen") { toggleDeco(true) }.apply { paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        fmtBar.addView(iconButton("S", "Durchstreichen") { toggleDeco(false) }.apply { paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG }, LinearLayout.LayoutParams(dp(48), dp(40)))
         fmtBar.addView(iconButton("Ü", "Überschrift") { cycleHeading() }, LinearLayout.LayoutParams(dp(48), dp(40)))
         fmtBar.addView(iconButton("•", "Liste") { toggleBullets() }, LinearLayout.LayoutParams(dp(48), dp(40)))
         root.addView(fmtBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -553,7 +557,7 @@ class TextActivity : AppCompatActivity() {
     private fun markDirty() {
         if (!fmtHintShown && !docx && !pdfNote) {
             fmtHintShown = true
-            toast("Fett, kursiv und Überschriften bleiben nur in einer Word-Datei oder im PDF erhalten (Menü ⋮).")
+            toast("Fett, kursiv, unterstrichen und Überschriften bleiben nur in einer Word-Datei oder im PDF erhalten (Menü ⋮).")
         }
         if (!dirty) { dirty = true; updateTitle() }
     }
@@ -577,6 +581,29 @@ class TextActivity : AppCompatActivity() {
         if (!covered) {
             e.setSpan(StyleSpan(style), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+        markDirty()
+    }
+
+    /** Unterstreichen (true) oder Durchstreichen (false) für die Markierung ein- oder ausschalten. */
+    private fun toggleDeco(underline: Boolean) {
+        val e = edit.text
+        val a = edit.selectionStart
+        val b = edit.selectionEnd
+        if (a < 0 || a == b) return toast("Bitte zuerst Text markieren.")
+        val start = minOf(a, b)
+        val end = maxOf(a, b)
+        fun make(): Any = if (underline) UnderlineSpan() else StrikethroughSpan()
+        val spans: List<Any> = if (underline) e.getSpans(start, end, UnderlineSpan::class.java).toList()
+            else e.getSpans(start, end, StrikethroughSpan::class.java).toList()
+        val covered = spans.any { e.getSpanStart(it) <= start && e.getSpanEnd(it) >= end }
+        for (sp in spans) {
+            val s0 = e.getSpanStart(sp)
+            val e0 = e.getSpanEnd(sp)
+            e.removeSpan(sp)
+            if (s0 < start) e.setSpan(make(), s0, start, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (e0 > end) e.setSpan(make(), end, e0, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        if (!covered) e.setSpan(make(), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         markDirty()
     }
 
@@ -651,11 +678,11 @@ class TextActivity : AppCompatActivity() {
                 val s = sb.length
                 sb.append(r.text)
                 val e = sb.length
-                if (e > s && p.level == 0) {
-                    if (r.bold) sb.setSpan(StyleSpan(Tf.BOLD), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (e > s) {
+                    if (r.bold && p.level == 0) sb.setSpan(StyleSpan(Tf.BOLD), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     if (r.italic) sb.setSpan(StyleSpan(Tf.ITALIC), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                } else if (e > s && r.italic) {
-                    sb.setSpan(StyleSpan(Tf.ITALIC), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    if (r.underline) sb.setSpan(UnderlineSpan(), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    if (r.strike) sb.setSpan(StrikethroughSpan(), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             }
             val end = sb.length
@@ -689,6 +716,12 @@ class TextActivity : AppCompatActivity() {
                 for (r in sp.getSpans(cs, e, StyleSpan::class.java)) {
                     cuts.add(sp.getSpanStart(r).coerceIn(cs, e)); cuts.add(sp.getSpanEnd(r).coerceIn(cs, e))
                 }
+                for (r in sp.getSpans(cs, e, UnderlineSpan::class.java)) {
+                    cuts.add(sp.getSpanStart(r).coerceIn(cs, e)); cuts.add(sp.getSpanEnd(r).coerceIn(cs, e))
+                }
+                for (r in sp.getSpans(cs, e, StrikethroughSpan::class.java)) {
+                    cuts.add(sp.getSpanStart(r).coerceIn(cs, e)); cuts.add(sp.getSpanEnd(r).coerceIn(cs, e))
+                }
                 val pts = cuts.toList()
                 for (k in 0 until pts.size - 1) {
                     val a = pts[k]
@@ -703,7 +736,9 @@ class TextActivity : AppCompatActivity() {
                         }
                     }
                     if (level > 0) bold = false
-                    runs.add(RichRun(text.substring(a, b), bold, ital))
+                    val und = sp.getSpans(a, b, UnderlineSpan::class.java).any { sp.getSpanStart(it) <= a && sp.getSpanEnd(it) >= b }
+                    val str = sp.getSpans(a, b, StrikethroughSpan::class.java).any { sp.getSpanStart(it) <= a && sp.getSpanEnd(it) >= b }
+                    runs.add(RichRun(text.substring(a, b), bold, ital, und, str))
                 }
             } else if (e > cs) {
                 runs.add(RichRun(text.substring(cs, e), false, false))
