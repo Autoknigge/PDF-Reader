@@ -448,8 +448,23 @@ class MainActivity : AppCompatActivity() {
                     .putExtra(SignActivity.EXTRA_NAME, src.name)
             )
         }
+        items.add("📝" to "Notizen zu dieser PDF"); actions.add { openPdfNotes(src.name, page) }
         menuDialog(src.name, items, "Schließen") { which -> actions[which]() }
     }
+
+    private fun openPdfNotes(title: String, page: Int) {
+        val id = currentUri?.toString() ?: src0Key(title)
+        val key = java.security.MessageDigest.getInstance("SHA-1").digest(id.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        startActivity(
+            Intent(this, TextActivity::class.java)
+                .putExtra(TextActivity.EXTRA_PDFNOTE_KEY, key)
+                .putExtra(TextActivity.EXTRA_PDFNOTE_TITLE, title)
+                .putExtra(TextActivity.EXTRA_PDFNOTE_PAGE, page)
+        )
+    }
+
+    private fun src0Key(title: String) = "name:$title"
 
     // ---------- Lesezeichen und Suche ----------
 

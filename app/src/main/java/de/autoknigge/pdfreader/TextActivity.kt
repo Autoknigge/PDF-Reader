@@ -16,7 +16,19 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.graphics.Paint
+import android.graphics.Typeface as Tf
+import android.graphics.pdf.PdfDocument
 import android.text.Editable
+import android.text.Layout
+import android.text.Spannable
+import android.text.Spanned
+import android.text.SpannableString
+import android.text.SpannableStringBuilder
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
@@ -52,6 +64,9 @@ class TextActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_NEW = "neu"
+        const val EXTRA_PDFNOTE_KEY = "pdfnotiz_key"
+        const val EXTRA_PDFNOTE_TITLE = "pdfnotiz_titel"
+        const val EXTRA_PDFNOTE_PAGE = "pdfnotiz_seite"
         private const val MAX_BYTES = 3 * 1024 * 1024
         private const val GOLD = 0xFFD4AF37.toInt()
         private const val CREME = 0xFFF8E7A4.toInt()
@@ -80,6 +95,12 @@ class TextActivity : AppCompatActivity() {
     private lateinit var sheetTabs: LinearLayout
     private lateinit var tableGrid: android.widget.TableLayout
     private lateinit var btnMore: TextView
+    private var docx = false         // diese Datei wird als Word-Datei gespeichert
+    private var pdfNote = false      // Notiz zu einer PDF (liegt intern, wird automatisch gesichert)
+    private var pdfNoteFile: java.io.File? = null
+    private var pdfNotePage = 0
+    private var fmtHintShown = false
+    private lateinit var fmtBar: LinearLayout
     private var converted = false    // aus Word/EPUB/HTML/... umgewandelt: das Original wird nie überschrieben
 
     // Vorlesen
@@ -100,15 +121,52 @@ class TextActivity : AppCompatActivity() {
     private var sizeSp = 16f
 
     private val saveAs = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { u ->
-        if (u != null) {
-            if (writeTo(u)) {
+        if (u != null && pdfNote) {
+            if (writeTo(u, asDocx = false)) toast("Kopie gespeichert.")
+        } else if (u != null) {
+            if (writeTo(u, asDocx = false)) {
                 uri = u
+                docx = false
                 name = queryName(u) ?: name
                 ownNote = false
                 converted = false
                 dirty = false
                 updateTitle()
                 toast("Gespeichert.")
+            }
+        }
+    }
+
+    private val saveDocx = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    ) { u ->
+        if (u != null && writeTo(u, asDocx = true)) {
+            if (pdfNote) {
+                toast("Kopie als Word-Datei gespeichert.")
+            } else {
+                uri = u
+                name = queryName(u) ?: name
+                ownNote = false
+                converted = false
+                docx = true
+                dirty = false
+                updateTitle()
+                toast("Als Word-Datei gespeichert.")
+            }
+        }
+    }
+
+    private val savePdf = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { u ->
+        if (u != null) {
+            worker.execute {
+                val ok = try {
+                    val bytes = makePdf()
+                    contentResolver.openOutputStream(u, "wt")?.use { it.write(bytes) } ?: throw IOException()
+                    true
+                } catch (e: Throwable) {
+                    false
+                }
+                runOnUiThread { toast(if (ok) "Als PDF gespeichert." else "Das PDF konnte nicht erstellt werden.") }
             }
         }
     }
@@ -145,6 +203,18 @@ class TextActivity : AppCompatActivity() {
         top.addView(iconButton("💾", "Speichern") { save() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(iconButton("⋮", "Mehr") { openMenu() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        fmtBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), 0, dp(6), 0)
+            setBackgroundColor(TANNE)
+        }
+        fmtBar.addView(iconButton("B", "Fett") { toggleStyle(Tf.BOLD) }.apply { setTypeface(Tf.DEFAULT_BOLD) }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        fmtBar.addView(iconButton("I", "Kursiv") { toggleStyle(Tf.ITALIC) }.apply { setTypeface(Tf.DEFAULT, Tf.ITALIC) }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        fmtBar.addView(iconButton("Ü", "Überschrift") { cycleHeading() }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        fmtBar.addView(iconButton("•", "Liste") { toggleBullets() }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        root.addView(fmtBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         edit = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
@@ -209,6 +279,7 @@ class TextActivity : AppCompatActivity() {
     private fun start() {
         val i = intent
         when {
+            i.hasExtra(EXTRA_PDFNOTE_KEY) -> openPdfNote(i)
             i.getBooleanExtra(EXTRA_NEW, false) -> newNote("")
             i.action == Intent.ACTION_SEND && i.hasExtra(Intent.EXTRA_TEXT) ->
                 newNote(i.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: "")
@@ -234,17 +305,54 @@ class TextActivity : AppCompatActivity() {
         showKeyboard()
     }
 
+    private fun openPdfNote(i: Intent) {
+        val key = (i.getStringExtra(EXTRA_PDFNOTE_KEY) ?: "").filter { it.isLetterOrDigit() }.ifEmpty { "x" }
+        val title = i.getStringExtra(EXTRA_PDFNOTE_TITLE) ?: "PDF"
+        pdfNotePage = i.getIntExtra(EXTRA_PDFNOTE_PAGE, 0)
+        pdfNote = true
+        name = "Notizen: $title"
+        val dir = java.io.File(filesDir, "pdfnotizen").apply { mkdirs() }
+        val file = java.io.File(dir, "$key.txt")
+        pdfNoteFile = file
+        val t = try { if (file.exists()) file.readText(Charsets.UTF_8) else "" } catch (e: Exception) { "" }
+        loading = true
+        edit.setText(t)
+        edit.isEnabled = true
+        loading = false
+        dirty = false
+        updateTitle()
+        if (t.isEmpty()) { edit.requestFocus(); showKeyboard() }
+    }
+
+    private fun savePdfNote() {
+        val f = pdfNoteFile ?: return
+        try {
+            val t = edit.text.toString()
+            if (t.isEmpty()) f.delete() else f.writeText(t, Charsets.UTF_8)
+            dirty = false
+            updateTitle()
+        } catch (ignored: Exception) {
+        }
+    }
+
     private fun openFile(u: Uri) {
         uri = u
         name = queryName(u) ?: (u.lastPathSegment?.substringAfterLast('/') ?: "Text.txt")
         val kind = DocConverter.kindOf(name, contentResolver.getType(u))
         converted = kind != DocConverter.Kind.TEXT
-        if (converted) name = name.substringBeforeLast('.', name) + ".txt"
+        if (converted && kind != DocConverter.Kind.DOCX) name = name.substringBeforeLast('.', name) + ".txt"
+        docx = kind == DocConverter.Kind.DOCX
         updateTitle()
         worker.execute {
             var sh: List<DocConverter.Sheet>? = null
-            val result = runCatching {
-                if (DocConverter.isSheet(kind)) {
+            var own = false
+            val result = runCatching<CharSequence> {
+                if (kind == DocConverter.Kind.DOCX) {
+                    val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
+                        ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
+                    own = DocConverter.isOwnDocx(bytes)
+                    buildSpannable(DocConverter.docxRich(bytes))
+                } else if (DocConverter.isSheet(kind)) {
                     val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
                         ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
                     sh = DocConverter.sheets(kind, bytes)
@@ -262,7 +370,10 @@ class TextActivity : AppCompatActivity() {
                     updateTitle()
                     sheets = sh
                     if (sh != null) { sheetNo = 0; showTable(true) }
-                    if (converted) toast("Nur der Text wurde übernommen. Speichern legt eine neue .txt an, das Original bleibt unverändert.")
+                    if (kind == DocConverter.Kind.DOCX) {
+                        converted = !own
+                        if (!own) toast("Word-Datei geöffnet. Speichern legt eine neue .docx an, das Original bleibt unverändert. Bilder und Tabellen werden nicht übernommen.")
+                    } else if (converted) toast("Nur der Text wurde übernommen. Speichern legt eine neue .txt an, das Original bleibt unverändert.")
                 }.onFailure {
                     toast(it.message ?: "Die Datei konnte nicht gelesen werden.")
                     finish()
@@ -315,10 +426,15 @@ class TextActivity : AppCompatActivity() {
 
     private fun save(quiet: Boolean = false) {
         if (loading) return
+        if (pdfNote) {
+            savePdfNote()
+            if (!quiet) toast("Notiz gespeichert.")
+            return
+        }
         val text = edit.text.toString()
         if (ownNote && uri == null && text.isEmpty()) return
         if (converted) {
-            if (!quiet) saveAs.launch(name)
+            if (!quiet) { if (docx) saveDocx.launch(name) else saveAs.launch(name) }
             return
         }
         var target = uri
@@ -337,12 +453,13 @@ class TextActivity : AppCompatActivity() {
         } else if (!ownNote) {
             // Original nicht beschreibbar: als neue Datei speichern lassen
             toast("Diese Datei lässt sich nicht überschreiben. Bitte „Speichern unter“ wählen.")
-            saveAs.launch(name)
+            if (docx) saveDocx.launch(name) else saveAs.launch(name)
         }
     }
 
-    private fun writeTo(u: Uri): Boolean = try {
-        contentResolver.openOutputStream(u, "wt")?.use { it.write(edit.text.toString().toByteArray(Charsets.UTF_8)) } ?: throw IOException()
+    private fun writeTo(u: Uri, asDocx: Boolean = docx): Boolean = try {
+        val bytes = if (asDocx) DocxWriter.write(extractParas(edit.text)) else edit.text.toString().toByteArray(Charsets.UTF_8)
+        contentResolver.openOutputStream(u, "wt")?.use { it.write(bytes) } ?: throw IOException()
         true
     } catch (e: Exception) {
         false
@@ -363,6 +480,11 @@ class TextActivity : AppCompatActivity() {
 
     private fun onBack() {
         if (loading) {
+            finish()
+            return
+        }
+        if (pdfNote) {
+            if (dirty) savePdfNote()
             finish()
             return
         }
@@ -396,35 +518,243 @@ class TextActivity : AppCompatActivity() {
     }
 
     private fun openMenu() {
-        val items = arrayOf(
-            "Suchen …",
-            "Weitersuchen",
-            "Schrift größer",
-            "Schrift kleiner",
-            if (dark) "Heller Hintergrund" else "Dunkler Hintergrund",
-            "Vorlesetempo …",
-            "Alles markieren und kopieren",
-            "Speichern unter …",
-            "Teilen / Senden an …"
-        ) + (if (sheets != null) arrayOf(if (tableMode) "Als Text anzeigen" else "Als Tabelle anzeigen") else emptyArray())
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        items.add("Suchen …" to { searchDialog() })
+        items.add("Weitersuchen" to { findNext() })
+        items.add("Schrift größer" to { setSize(sizeSp + 2f) })
+        items.add("Schrift kleiner" to { setSize(sizeSp - 2f) })
+        items.add((if (dark) "Heller Hintergrund" else "Dunkler Hintergrund") to {
+            dark = !dark; prefs.edit().putBoolean("text_dunkel", dark).apply(); applyLook()
+        })
+        items.add("Vorlesetempo …" to { tempoDialog() })
+        if (pdfNote) items.add("Seitenverweis einfügen (S. ${pdfNotePage + 1})" to { insertAtCursor("S. ${pdfNotePage + 1}: ") })
+        items.add("Alles markieren und kopieren" to { copyAll() })
+        items.add("Als Text speichern unter …" to { saveAs.launch(baseName() + ".txt") })
+        items.add("Als Word-Datei (.docx) speichern …" to { saveDocx.launch(baseName() + ".docx") })
+        items.add("Als PDF speichern …" to { savePdf.launch(baseName() + ".pdf") })
+        items.add("Teilen / Senden an …" to { share() })
+        if (sheets != null) items.add((if (tableMode) "Als Text anzeigen" else "Als Tabelle anzeigen") to { showTable(!tableMode) })
         AlertDialog.Builder(this)
             .setTitle(name)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> searchDialog()
-                    1 -> findNext()
-                    2 -> setSize(sizeSp + 2f)
-                    3 -> setSize(sizeSp - 2f)
-                    4 -> { dark = !dark; prefs.edit().putBoolean("text_dunkel", dark).apply(); applyLook() }
-                    5 -> tempoDialog()
-                    6 -> copyAll()
-                    7 -> saveAs.launch(name)
-                    8 -> share()
-                    9 -> showTable(!tableMode)
-                }
-            }
+            .setItems(items.map { it.first }.toTypedArray()) { _, which -> items[which].second() }
             .setNegativeButton("Schließen", null)
             .show()
+    }
+
+    private fun baseName() = name.substringBeforeLast('.', name).replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
+    private fun insertAtCursor(t: String) {
+        val pos = edit.selectionStart.coerceAtLeast(0)
+        edit.text.insert(pos, t)
+    }
+
+    // ------------------------------------------------------------------ Formatieren
+
+    private fun markDirty() {
+        if (!fmtHintShown && !docx && !pdfNote) {
+            fmtHintShown = true
+            toast("Fett, kursiv und Überschriften bleiben nur in einer Word-Datei oder im PDF erhalten (Menü ⋮).")
+        }
+        if (!dirty) { dirty = true; updateTitle() }
+    }
+
+    private fun toggleStyle(style: Int) {
+        val e = edit.text
+        val a = edit.selectionStart
+        val b = edit.selectionEnd
+        if (a < 0 || a == b) return toast("Bitte zuerst Text markieren.")
+        val start = minOf(a, b)
+        val end = maxOf(a, b)
+        val spans = e.getSpans(start, end, StyleSpan::class.java).filter { it.style == style }
+        val covered = spans.any { e.getSpanStart(it) <= start && e.getSpanEnd(it) >= end }
+        for (sp in spans) {
+            val s0 = e.getSpanStart(sp)
+            val e0 = e.getSpanEnd(sp)
+            e.removeSpan(sp)
+            if (s0 < start) e.setSpan(StyleSpan(style), s0, start, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (e0 > end) e.setSpan(StyleSpan(style), end, e0, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        if (!covered) {
+            e.setSpan(StyleSpan(style), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        markDirty()
+    }
+
+    private fun paraRange(): IntArray {
+        val t = edit.text
+        val a = minOf(edit.selectionStart, edit.selectionEnd).coerceAtLeast(0)
+        val b = maxOf(edit.selectionStart, edit.selectionEnd).coerceAtLeast(0)
+        val s = t.lastIndexOf('\n', (a - 1).coerceAtLeast(0)).let { if (a == 0 || it < 0 || it >= a) 0 else it + 1 }
+        val e = t.indexOf('\n', b).let { if (it < 0) t.length else it }
+        return intArrayOf(s, e)
+    }
+
+    private fun paragraphs(): List<IntArray> {
+        val r = paraRange()
+        val t = edit.text.toString()
+        val out = ArrayList<IntArray>()
+        var s = r[0]
+        while (s <= r[1]) {
+            val e = t.indexOf('\n', s).let { if (it < 0 || it > r[1]) r[1] else it }
+            out.add(intArrayOf(s, e))
+            if (e >= r[1]) break
+            s = e + 1
+        }
+        return out
+    }
+
+    private fun cycleHeading() {
+        val e = edit.text
+        for (p in paragraphs()) {
+            var s = p[0]
+            val en = p[1]
+            if (en <= s) continue
+            if (e.hasAt("• ", s)) s += 2
+            if (en <= s) continue
+            val sizes = e.getSpans(s, en, RelativeSizeSpan::class.java).filter { e.getSpanStart(it) <= s && e.getSpanEnd(it) >= en }
+            val cur = when { sizes.any { it.sizeChange >= 1.5f } -> 1; sizes.any { it.sizeChange >= 1.2f } -> 2; else -> 0 }
+            for (sp in e.getSpans(s, en, RelativeSizeSpan::class.java)) e.removeSpan(sp)
+            if (cur == 0 || cur == 2) {
+                // Fett der Überschrift entfernen, bevor neu gesetzt wird
+                for (sp in e.getSpans(s, en, StyleSpan::class.java)) if (sp.style == Tf.BOLD) e.removeSpan(sp)
+            }
+            val next = when (cur) { 0 -> 1; 1 -> 2; else -> 0 }
+            if (next > 0) {
+                e.setSpan(RelativeSizeSpan(if (next == 1) 1.6f else 1.3f), s, en, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                e.setSpan(StyleSpan(Tf.BOLD), s, en, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        markDirty()
+    }
+
+    private fun toggleBullets() {
+        val e = edit.text
+        val ps = paragraphs()
+        val allBullets = ps.all { e.hasAt("• ", it[0]) }
+        // von hinten nach vorn, damit die Positionen stimmen
+        for (p in ps.reversed()) {
+            if (allBullets) e.delete(p[0], p[0] + 2) else if (!e.hasAt("• ", p[0])) e.insert(p[0], "• ")
+        }
+        markDirty()
+    }
+
+    private fun CharSequence.hasAt(prefix: String, at: Int): Boolean =
+        at >= 0 && at + prefix.length <= length && subSequence(at, at + prefix.length).toString() == prefix
+
+    private fun buildSpannable(paras: List<RichPara>): SpannableStringBuilder {
+        val sb = SpannableStringBuilder()
+        paras.forEachIndexed { i, p ->
+            if (i > 0) sb.append('\n')
+            if (p.bullet) sb.append("• ")
+            val contentStart = sb.length
+            for (r in p.runs) {
+                val s = sb.length
+                sb.append(r.text)
+                val e = sb.length
+                if (e > s && p.level == 0) {
+                    if (r.bold) sb.setSpan(StyleSpan(Tf.BOLD), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    if (r.italic) sb.setSpan(StyleSpan(Tf.ITALIC), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                } else if (e > s && r.italic) {
+                    sb.setSpan(StyleSpan(Tf.ITALIC), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+            val end = sb.length
+            if (p.level > 0 && end > contentStart) {
+                sb.setSpan(RelativeSizeSpan(if (p.level == 1) 1.6f else 1.3f), contentStart, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                sb.setSpan(StyleSpan(Tf.BOLD), contentStart, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        return sb
+    }
+
+    private fun extractParas(t: CharSequence): List<RichPara> {
+        val text = t.toString()
+        val sp = t as? Spanned
+        val out = ArrayList<RichPara>()
+        var s = 0
+        while (true) {
+            val nl = text.indexOf('\n', s)
+            val e = if (nl < 0) text.length else nl
+            var cs = s
+            var bullet = false
+            if (text.startsWith("• ", s) && e >= s + 2) { bullet = true; cs = s + 2 }
+            var level = 0
+            val runs = ArrayList<RichRun>()
+            if (sp != null && e > cs) {
+                for (r in sp.getSpans(cs, e, RelativeSizeSpan::class.java)) {
+                    if (sp.getSpanStart(r) <= cs && sp.getSpanEnd(r) >= e) level = if (r.sizeChange >= 1.5f) 1 else 2
+                }
+                val cuts = java.util.TreeSet<Int>()
+                cuts.add(cs); cuts.add(e)
+                for (r in sp.getSpans(cs, e, StyleSpan::class.java)) {
+                    cuts.add(sp.getSpanStart(r).coerceIn(cs, e)); cuts.add(sp.getSpanEnd(r).coerceIn(cs, e))
+                }
+                val pts = cuts.toList()
+                for (k in 0 until pts.size - 1) {
+                    val a = pts[k]
+                    val b = pts[k + 1]
+                    if (b <= a) continue
+                    var bold = false
+                    var ital = false
+                    for (r in sp.getSpans(a, b, StyleSpan::class.java)) {
+                        if (sp.getSpanStart(r) <= a && sp.getSpanEnd(r) >= b) {
+                            if (r.style == Tf.BOLD || r.style == Tf.BOLD_ITALIC) bold = true
+                            if (r.style == Tf.ITALIC || r.style == Tf.BOLD_ITALIC) ital = true
+                        }
+                    }
+                    if (level > 0) bold = false
+                    runs.add(RichRun(text.substring(a, b), bold, ital))
+                }
+            } else if (e > cs) {
+                runs.add(RichRun(text.substring(cs, e), false, false))
+            }
+            out.add(RichPara(level, bullet, runs))
+            if (nl < 0) break
+            s = nl + 1
+        }
+        return out
+    }
+
+    // ------------------------------------------------------------------ PDF erzeugen
+
+    private fun makePdf(): ByteArray {
+        val src = SpannableString(edit.text)
+        if (src.isBlank()) throw IOException("leer")
+        val pageW = 595
+        val pageH = 842
+        val margin = 56
+        val width = pageW - 2 * margin
+        val usable = pageH - 2 * margin
+        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12f; color = 0xFF000000.toInt() }
+        val lay = StaticLayout.Builder.obtain(src, 0, src.length, paint, width)
+            .setLineSpacing(0f, 1.15f).setAlignment(Layout.Alignment.ALIGN_NORMAL).build()
+        val doc = PdfDocument()
+        try {
+            var line = 0
+            var pageNo = 1
+            val n = lay.lineCount
+            while (line < n) {
+                val top = lay.getLineTop(line)
+                var end = line
+                while (end < n && lay.getLineBottom(end) - top <= usable) end++
+                if (end == line) end = line + 1
+                val page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageNo).create())
+                val c = page.canvas
+                c.save()
+                c.clipRect(margin.toFloat(), margin.toFloat(), (margin + width).toFloat(), (margin + (lay.getLineBottom(end - 1) - top)).toFloat())
+                c.translate(margin.toFloat(), (margin - top).toFloat())
+                lay.draw(c)
+                c.restore()
+                doc.finishPage(page)
+                line = end
+                pageNo++
+            }
+            val out = ByteArrayOutputStream()
+            doc.writeTo(out)
+            return out.toByteArray()
+        } finally {
+            doc.close()
+        }
     }
 
     private fun searchDialog() {
@@ -506,6 +836,7 @@ class TextActivity : AppCompatActivity() {
         tableMode = on && list != null
         scroll.visibility = if (tableMode) android.view.View.GONE else android.view.View.VISIBLE
         tableBox.visibility = if (tableMode) android.view.View.VISIBLE else android.view.View.GONE
+        fmtBar.visibility = if (tableMode) android.view.View.GONE else android.view.View.VISIBLE
         if (tableMode) renderSheet()
     }
 
@@ -843,6 +1174,7 @@ class TextActivity : AppCompatActivity() {
     override fun onPause() {
         // Eigene Notizen sichern, damit nichts verloren geht; fremde Dateien nur auf ausdrücklichen Wunsch.
         if (ownNote && dirty && !loading && edit.text.isNotEmpty()) save(quiet = true)
+        if (pdfNote && dirty && !loading) savePdfNote()
         adManager.pause()
         super.onPause()
     }

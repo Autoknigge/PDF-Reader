@@ -144,6 +144,72 @@ object DocConverter {
         return sb.toString().replace(Regex("\n\n(?=\n)"), "\n")
     }
 
+    // ---------------------------------------------------------------- DOCX mit Formatierung
+
+    /** Wurde die Datei von dieser App geschrieben (dann darf sie beim Speichern überschrieben werden)? */
+    fun isOwnDocx(bytes: ByteArray): Boolean {
+        val app = unzip(bytes)["docProps/app.xml"] ?: return false
+        return String(app, Charsets.UTF_8).contains("<Application>PDF-Reader</Application>")
+    }
+
+    fun docxRich(bytes: ByteArray): List<RichPara> {
+        val files = unzip(bytes)
+        val doc = files["word/document.xml"] ?: throw IOException("Das ist keine gültige Word-Datei.")
+        val paras = ArrayList<RichPara>()
+        val p = parser(doc)
+        var ev = p.eventType
+        var runs = ArrayList<RichRun>()
+        var level = 0
+        var bullet = false
+        var inPPr = false
+        var inRun = false
+        var inT = false
+        var bold = false
+        var italic = false
+        fun add(t: String) {
+            if (t.isEmpty()) return
+            val last = runs.lastOrNull()
+            if (last != null && last.bold == bold && last.italic == italic) {
+                runs[runs.size - 1] = RichRun(last.text + t, bold, italic)
+            } else runs.add(RichRun(t, bold, italic))
+        }
+        fun on(v: String?) = v == null || (v != "0" && v != "false")
+        while (ev != XmlPullParser.END_DOCUMENT) {
+            when (ev) {
+                XmlPullParser.START_TAG -> when (ln(p)) {
+                    "p" -> { runs = ArrayList(); level = 0; bullet = false }
+                    "pPr" -> inPPr = true
+                    "pStyle" -> if (inPPr) {
+                        val v = (attr(p, "val") ?: "").lowercase()
+                        level = when {
+                            v == "heading1" || v == "title" || v == "berschrift1" || v == "überschrift1" -> 1
+                            v.startsWith("heading") || v.startsWith("berschrift") || v.startsWith("überschrift") || v == "subtitle" -> 2
+                            else -> 0
+                        }
+                    }
+                    "numPr" -> if (inPPr) bullet = true
+                    "r" -> { inRun = true; bold = false; italic = false }
+                    "b" -> if (inRun && !inPPr) bold = on(attr(p, "val"))
+                    "i" -> if (inRun && !inPPr) italic = on(attr(p, "val"))
+                    "t" -> inT = true
+                    "tab" -> if (inRun) add("\t")
+                    "br", "cr" -> if (inRun) add("\n")
+                }
+                XmlPullParser.END_TAG -> when (ln(p)) {
+                    "pPr" -> inPPr = false
+                    "r" -> inRun = false
+                    "t" -> inT = false
+                    "p" -> paras.add(RichPara(level, bullet, runs))
+                }
+                XmlPullParser.TEXT -> if (inT) add(p.text)
+            }
+            ev = p.next()
+        }
+        while (paras.isNotEmpty() && paras.last().runs.all { it.text.isBlank() }) paras.removeAt(paras.size - 1)
+        if (paras.isEmpty()) throw IOException("In dieser Datei wurde kein Text gefunden.")
+        return paras
+    }
+
     // ---------------------------------------------------------------- ODT
 
     private fun odt(bytes: ByteArray): String {
