@@ -442,28 +442,26 @@ class MainActivity : AppCompatActivity() {
         val page = pager.currentItem
         val marked = uri != null && library.isBookmarked(uri, page)
         val marks = if (uri != null) library.bookmarks(uri) else emptyList()
-        val items = ArrayList<Pair<String, String>>()
-        val actions = ArrayList<() -> Unit>()
-        items.add("🔍" to "Im Text suchen …"); actions.add { searchDialog() }
-        items.add("🔖" to (if (marked) "Lesezeichen entfernen (Seite ${page + 1})" else "Lesezeichen setzen (Seite ${page + 1})"))
-        actions.add { toggleBookmark() }
-        if (marks.isNotEmpty()) {
-            items.add("📑" to "Lesezeichen anzeigen (${marks.size})"); actions.add { bookmarkList() }
-        }
-        items.add("📤" to "Senden an …"); actions.add { shareCopy(src) }
-        items.add("💾" to "Speichern unter …"); actions.add { saveAs.launch(Docs.fileNameFor(src.name)) }
-        items.add("🖨" to "Drucken"); actions.add { printPdf(src) }
-        items.add("✍" to "Unterschreiben / Text …"); actions.add {
+        // Gleiche Reihenfolge wie im Text-Bildschirm; dateispezifische Punkte stehen ganz unten.
+        val e = ArrayList<MenuUi.Entry>()
+        e.add(MenuUi.Entry("🔍", "Im Text suchen …") { searchDialog() })
+        e.add(MenuUi.Entry("📑", "Inhaltsverzeichnis") { showPdfToc(src) })
+        e.add(MenuUi.Entry("🔖", if (marked) "Lesezeichen entfernen (Seite ${page + 1})" else "Lesezeichen setzen (Seite ${page + 1})") { toggleBookmark() })
+        if (marks.isNotEmpty()) e.add(MenuUi.Entry("📚", "Lesezeichen anzeigen (${marks.size})") { bookmarkList() })
+        e.add(MenuUi.Entry("📝", "Notizen und Zitate") { openPdfNotes(src.name, page) })
+        e.add(MenuUi.Entry("📤", "Senden an …") { shareCopy(src) })
+        e.add(MenuUi.Entry("💾", "Speichern unter …") { saveAs.launch(Docs.fileNameFor(src.name)) })
+        e.add(MenuUi.Entry("🖨", "Drucken") { printPdf(src) })
+        // Nur bei PDFs
+        e.add(MenuUi.Entry("✏️", "Text bearbeiten (als Word-Datei oder Text)") { pdfToEditableText(src) })
+        e.add(MenuUi.Entry("✍", "Unterschreiben / Text …") {
             signLauncher.launch(
                 Intent(this, SignActivity::class.java)
                     .putExtra(SignActivity.EXTRA_FILE, src.file.absolutePath)
                     .putExtra(SignActivity.EXTRA_NAME, src.name)
             )
-        }
-        items.add("📑" to "Inhaltsverzeichnis"); actions.add { showPdfToc(src) }
-        items.add("✏️" to "Text bearbeiten (als Word-Datei oder Text)"); actions.add { pdfToEditableText(src) }
-        items.add("📝" to "Notizen zu dieser PDF"); actions.add { openPdfNotes(src.name, page) }
-        menuDialog(src.name, items, "Schließen") { which -> actions[which]() }
+        })
+        MenuUi.show(this, src.name, e)
     }
 
     /** Holt den Text aus der PDF und öffnet ihn im Text-Bildschirm zum Bearbeiten und Speichern als Word-Datei, Text oder PDF. */
@@ -633,6 +631,18 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Zuletzt geöffnet ----------
 
+    private fun kindLabel(name: String, kind: String): String {
+        val n = name.lowercase()
+        return when {
+            kind == "comic" || n.endsWith(".cbz") -> "Comic"
+            n.endsWith(".docx") || n.endsWith(".odt") || n.endsWith(".rtf") -> "Textdokument"
+            n.endsWith(".epub") || n.endsWith(".fb2") -> "E-Book"
+            n.endsWith(".xlsx") || n.endsWith(".xlsm") || n.endsWith(".ods") -> "Tabelle"
+            n.endsWith(".html") || n.endsWith(".htm") -> "Webseite"
+            else -> "Textdatei"
+        }
+    }
+
     private fun showRecents() {
         recentBox.removeAllViews()
         val list = library.recents()
@@ -663,21 +673,30 @@ class MainActivity : AppCompatActivity() {
                 )
                 lp.bottomMargin = (6 * d).toInt()
                 layoutParams = lp
-                setOnClickListener { if (!loading) open(Uri.parse(doc.uri), null, true) }
+                setOnClickListener {
+                    if (loading) return@setOnClickListener
+                    when (doc.kind) {
+                        "text" -> startActivity(Intent(this@MainActivity, TextActivity::class.java).setAction(Intent.ACTION_VIEW)
+                            .setData(Uri.parse(doc.uri)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                        "comic" -> startActivity(Intent(this@MainActivity, ComicActivity::class.java)
+                            .setData(Uri.parse(doc.uri)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        else -> open(Uri.parse(doc.uri), null, true)
+                    }
+                }
             }
             val texts = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
             texts.addView(TextView(this).apply {
-                text = "📄  ${doc.name}"
+                text = (when (doc.kind) { "text" -> "📝  "; "comic" -> "📚  "; else -> "📄  " }) + doc.name
                 textSize = 16f
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
                 setTextColor(getColor(R.color.text_hell))
             })
             texts.addView(TextView(this).apply {
-                text = if (doc.pages > 0) "Weiter auf Seite ${doc.page + 1} von ${doc.pages}" else ""
+                text = if (doc.kind == "pdf") (if (doc.pages > 0) "Weiter auf Seite ${doc.page + 1} von ${doc.pages}" else "") else kindLabel(doc.name, doc.kind)
                 textSize = 13f
                 setTextColor(getColor(R.color.text_gedimmt))
             })
@@ -1073,6 +1092,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         adManager.resume()
+        if (::recentBox.isInitialized && ::library.isInitialized) showRecents()
         val ctx: Context = applicationContext
         worker.execute { Docs.cleanup(ctx) }
     }

@@ -142,6 +142,7 @@ class ComicActivity : AppCompatActivity() {
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 r.onSuccess { (z, list) ->
+                    try { Library(this).touch(u.toString(), queryName(u) ?: "Comic", 0, "comic") } catch (ignored: Exception) {}
                     zip = z
                     names = list
                     pager.adapter = Adapter()

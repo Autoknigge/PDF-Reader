@@ -5,7 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Ein zuletzt geöffnetes Dokument mit der Seite, auf der man aufgehört hat (0-basiert). */
-class RecentDoc(val uri: String, val name: String, val page: Int, val pages: Int)
+class RecentDoc(val uri: String, val name: String, val page: Int, val pages: Int, val kind: String = "pdf")
 
 /**
  * Merkt sich zuletzt geöffnete PDFs, die Lese-Position und Lesezeichen – nur auf dem Gerät
@@ -16,14 +16,14 @@ class Library(context: Context) {
     private val prefs = context.getSharedPreferences("pdfreader_lib", Context.MODE_PRIVATE)
 
     companion object {
-        private const val MAX_RECENT = 6
+        private const val MAX_RECENT = 8
     }
 
     fun recents(): List<RecentDoc> = try {
         val arr = JSONArray(prefs.getString("recent", "[]"))
         (0 until arr.length()).map {
             val o = arr.getJSONObject(it)
-            RecentDoc(o.getString("uri"), o.getString("name"), o.optInt("page", 0), o.optInt("pages", 0))
+            RecentDoc(o.getString("uri"), o.getString("name"), o.optInt("page", 0), o.optInt("pages", 0), o.optString("kind", "pdf"))
         }
     } catch (e: Exception) {
         emptyList()
@@ -33,17 +33,17 @@ class Library(context: Context) {
         val arr = JSONArray()
         list.forEach {
             arr.put(
-                JSONObject().put("uri", it.uri).put("name", it.name).put("page", it.page).put("pages", it.pages)
+                JSONObject().put("uri", it.uri).put("name", it.name).put("page", it.page).put("pages", it.pages).put("kind", it.kind)
             )
         }
         prefs.edit().putString("recent", arr.toString()).apply()
     }
 
     /** Das Dokument steht ab jetzt ganz oben; die gemerkte Seite bleibt erhalten. */
-    fun touch(uri: String, name: String, pages: Int) {
+    fun touch(uri: String, name: String, pages: Int, kind: String = "pdf") {
         val old = recents()
         val page = old.firstOrNull { it.uri == uri }?.page ?: 0
-        val list = listOf(RecentDoc(uri, name, page.coerceIn(0, (pages - 1).coerceAtLeast(0)), pages)) +
+        val list = listOf(RecentDoc(uri, name, page.coerceIn(0, (pages - 1).coerceAtLeast(0)), pages, kind)) +
             old.filter { it.uri != uri }
         saveRecents(list.take(MAX_RECENT))
     }
@@ -53,7 +53,7 @@ class Library(context: Context) {
     fun setPage(uri: String, page: Int) {
         val list = recents()
         if (list.none { it.uri == uri }) return
-        saveRecents(list.map { if (it.uri == uri) RecentDoc(it.uri, it.name, page, it.pages) else it })
+        saveRecents(list.map { if (it.uri == uri) RecentDoc(it.uri, it.name, page, it.pages, it.kind) else it })
     }
 
     fun removeRecent(uri: String) = saveRecents(recents().filter { it.uri != uri })

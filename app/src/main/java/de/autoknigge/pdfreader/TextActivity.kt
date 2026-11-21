@@ -98,6 +98,14 @@ class TextActivity : AppCompatActivity() {
     private var sheetNo = 0
     private var shownRows = 0
     private lateinit var scroll: ScrollView
+    private lateinit var scrollFrame: FrameLayout
+    private lateinit var searchBar: LinearLayout
+    private lateinit var tvHitCount: TextView
+    private val hitStarts = ArrayList<Int>()
+    private var hitNo = 0
+    private var curSpan: Any? = null
+    private val hitHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var hitRepeat: Runnable? = null
     private lateinit var tableBox: LinearLayout
     private lateinit var sheetTabs: LinearLayout
     private lateinit var tableGrid: android.widget.TableLayout
@@ -282,7 +290,14 @@ class TextActivity : AppCompatActivity() {
             isEnabled = false
         }
         scroll = ScrollView(this).apply { isFillViewport = true; addView(edit, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) }
-        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        scrollFrame = FrameLayout(this)
+        scrollFrame.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        searchBar = buildSearchBar()
+        scrollFrame.addView(searchBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            setMargins(0, 0, dp(14), dp(14))
+        })
+        root.addView(scrollFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         buildTableUi()
         root.addView(tableBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         applyLook()
@@ -293,6 +308,7 @@ class TextActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 if (!loading && reading != Read.IDLE) stopReading()
+                if (!loading && ::searchBar.isInitialized && searchBar.visibility == android.view.View.VISIBLE) closeSearch()
                 if (!loading && !dirty) {
                     dirty = true
                     updateTitle()
@@ -422,6 +438,7 @@ class TextActivity : AppCompatActivity() {
     private fun openFile(u: Uri) {
         uri = u
         name = queryName(u) ?: (u.lastPathSegment?.substringAfterLast('/') ?: "Text.txt")
+        val origName = name
         val kind = DocConverter.kindOf(name, contentResolver.getType(u))
         converted = kind != DocConverter.Kind.TEXT
         if (converted && kind != DocConverter.Kind.DOCX) name = name.substringBeforeLast('.', name) + ".txt"
@@ -456,6 +473,7 @@ class TextActivity : AppCompatActivity() {
                     loading = false
                     dirty = false
                     updateTitle()
+                    try { Library(this).touch(u.toString(), origName, 0, "text") } catch (ignored: Exception) {}
                     sheets = sh
                     if (sh != null) { sheetNo = 0; showTable(true) }
                     if (kind == DocConverter.Kind.DOCX) {
@@ -463,6 +481,7 @@ class TextActivity : AppCompatActivity() {
                         if (!own) toast("Word-Datei geöffnet. Speichern legt eine neue .docx an, das Original bleibt unverändert. Bilder und Tabellen werden nicht übernommen.")
                     } else if (converted) toast("Nur der Text wurde übernommen. Speichern legt eine neue .txt an, das Original bleibt unverändert.")
                 }.onFailure {
+                    try { Library(this).removeRecent(u.toString()) } catch (ignored: Exception) {}
                     toast(it.message ?: "Die Datei konnte nicht gelesen werden.")
                     finish()
                 }
@@ -607,94 +626,25 @@ class TextActivity : AppCompatActivity() {
 
     private fun openMenu() {
         val e = ArrayList<MenuUi.Entry>()
-        // Gemeinsame Punkte, gleich aufgebaut wie im PDF-Menü
+        // Gleiche Reihenfolge wie im PDF-Menü; dateispezifische Punkte stehen ganz unten.
         e.add(MenuUi.Entry("🔍", "Im Text suchen …") { searchDialog() })
+        if (!pdfNote && headings().isNotEmpty()) e.add(MenuUi.Entry("📑", "Inhaltsverzeichnis") { tocDialog() })
         if (!pdfNote && uri != null) {
             val n = loadMarks().size
             e.add(MenuUi.Entry("🔖", if (markHere()) "Lesezeichen entfernen (hier)" else "Lesezeichen setzen (hier)") { toggleMark() })
-            if (n > 0) e.add(MenuUi.Entry("📑", "Lesezeichen anzeigen ($n)") { marksDialog() })
+            if (n > 0) e.add(MenuUi.Entry("📚", "Lesezeichen anzeigen ($n)") { marksDialog() })
+            e.add(MenuUi.Entry("📝", "Notizen und Zitate") { openNotes() })
         }
-        if (!pdfNote && headings().isNotEmpty()) e.add(MenuUi.Entry("📑", "Inhaltsverzeichnis") { tocDialog() })
         e.add(MenuUi.Entry("📤", "Senden an …") { share() })
         e.add(MenuUi.Entry("💾", "Speichern unter …") { saveChooser() })
         e.add(MenuUi.Entry("🖨", "Drucken") { printText() })
-        if (!pdfNote && uri != null) e.add(MenuUi.Entry("📝", "Notizen und Zitate zu dieser Datei") { openNotes() })
         // Nur im Text-Bildschirm
         e.add(MenuUi.Entry("🔠", "", label = { "Schrift " + sizeSp.toInt() }, minus = { setSize(sizeSp - 1f) }, plus = { setSize(sizeSp + 1f) }))
         e.add(MenuUi.Entry("🎨", "Darstellung und Einstellungen …") { lookDialog() })
-        e.add(MenuUi.Entry("⏭", "Weitersuchen") { findNext() })
         e.add(MenuUi.Entry("📋", "Alles markieren und kopieren") { copyAll() })
-        if (pdfNote) e.add(MenuUi.Entry("🔖", "Seitenverweis einfügen (S. ${pdfNotePage + 1})") { insertAtCursor("S. ${pdfNotePage + 1}: ") })
+        if (pdfNote) e.add(MenuUi.Entry("📍", "Seitenverweis einfügen (S. ${pdfNotePage + 1})") { insertAtCursor("S. ${pdfNotePage + 1}: ") })
         if (sheets != null) e.add(MenuUi.Entry("📊", if (tableMode) "Als Text anzeigen" else "Als Tabelle anzeigen") { showTable(!tableMode) })
         MenuUi.show(this, name, e)
-    }
-
-    // ------------------------------------------------------------------ Lesezeichen im Text
-
-    private fun marksKey(): String? = noteKey()?.let { "tm_$it" }
-
-    private fun loadMarks(): MutableList<Pair<Int, String>> {
-        val k = marksKey() ?: return ArrayList()
-        val j = prefs.getString(k, null) ?: return ArrayList()
-        return try {
-            val a = org.json.JSONArray(j)
-            (0 until a.length()).map { a.getJSONArray(it).let { x -> x.getInt(0) to x.getString(1) } }.toMutableList()
-        } catch (e: Exception) {
-            ArrayList()
-        }
-    }
-
-    private fun saveMarks(list: List<Pair<Int, String>>) {
-        val k = marksKey() ?: return
-        val a = org.json.JSONArray()
-        list.forEach { a.put(org.json.JSONArray().put(it.first).put(it.second)) }
-        prefs.edit().putString(k, a.toString()).apply()
-    }
-
-    /** Anfang des Absatzes, der oben im Fenster steht. */
-    private fun topParaStart(): Int {
-        val l = edit.layout ?: return 0
-        val off = l.getLineStart(l.getLineForVertical(scroll.scrollY.coerceAtLeast(0)))
-        val i = edit.text.lastIndexOf('\n', (off - 1).coerceAtLeast(0))
-        return if (off == 0 || i < 0) 0 else i + 1
-    }
-
-    private fun markHere(): Boolean {
-        val p = topParaStart()
-        return loadMarks().any { kotlin.math.abs(it.first - p) < 200 }
-    }
-
-    private fun toggleMark() {
-        if (marksKey() == null) return toast("Lesezeichen gibt es nur für geöffnete Dateien.")
-        val list = loadMarks()
-        val p = topParaStart()
-        val idx = list.indexOfFirst { kotlin.math.abs(it.first - p) < 200 }
-        if (idx >= 0) {
-            list.removeAt(idx)
-            toast("Lesezeichen entfernt.")
-        } else {
-            val t = edit.text
-            val snip = t.substring(p.coerceIn(0, t.length), minOf(t.length, p + 60)).replace('\n', ' ').trim()
-            list.add(p to snip)
-            list.sortBy { it.first }
-            toast("Lesezeichen gesetzt.")
-        }
-        saveMarks(list)
-    }
-
-    private fun marksDialog() {
-        val list = loadMarks()
-        if (list.isEmpty()) return toast("Noch keine Lesezeichen.")
-        MenuUi.show(
-            this, "Lesezeichen",
-            list.map { m ->
-                MenuUi.Entry("🔖", (if (m.second.length > 45) m.second.take(42) + "…" else m.second.ifEmpty { "Stelle " + m.first })) {
-                    edit.requestFocus()
-                    edit.setSelection(m.first.coerceIn(0, edit.text.length))
-                    scrollTo(m.first)
-                }
-            }
-        )
     }
 
     private fun saveChooser() {
@@ -1025,15 +975,10 @@ class TextActivity : AppCompatActivity() {
             .setView(wrap)
             .setPositiveButton("Suchen") { _, _ ->
                 lastQuery = box.text.toString()
-                findFrom(0)
+                findFrom(edit.selectionStart.coerceAtLeast(0))
             }
             .setNegativeButton("Abbrechen", null)
             .show()
-    }
-
-    private fun findNext() {
-        if (lastQuery.isEmpty()) return searchDialog()
-        findFrom(edit.selectionEnd.coerceAtLeast(0))
     }
 
     private val hitSpans = ArrayList<Any>()
@@ -1041,20 +986,26 @@ class TextActivity : AppCompatActivity() {
     private fun clearHits() {
         for (sp in hitSpans) edit.text.removeSpan(sp)
         hitSpans.clear()
+        curSpan?.let { edit.text.removeSpan(it) }
+        curSpan = null
+    }
+
+    private fun closeSearch() {
+        hitHandler.removeCallbacksAndMessages(null)
+        clearHits()
+        hitStarts.clear()
+        if (::searchBar.isInitialized) searchBar.visibility = android.view.View.GONE
     }
 
     private fun findFrom(start: Int) {
         val text = edit.text.toString()
         clearHits()
+        hitStarts.clear()
         val q = lastQuery
         if (q.isEmpty()) return
-        // alle Treffer zählen und (bis 3000) hell markieren
-        var total = 0
         var pos = text.indexOf(q, 0, ignoreCase = true)
-        val starts = ArrayList<Int>()
-        while (pos >= 0) {
-            total++
-            if (starts.size < 100000) starts.add(pos)
+        while (pos >= 0 && hitStarts.size < 100000) {
+            hitStarts.add(pos)
             if (hitSpans.size < 3000) {
                 val sp = android.text.style.BackgroundColorSpan(0x99FFEB3B.toInt())
                 edit.text.setSpan(sp, pos, pos + q.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -1062,18 +1013,82 @@ class TextActivity : AppCompatActivity() {
             }
             pos = text.indexOf(q, pos + q.length.coerceAtLeast(1), ignoreCase = true)
         }
-        if (total == 0) {
+        if (hitStarts.isEmpty()) {
+            searchBar.visibility = android.view.View.GONE
             toast("„$q“ nicht gefunden.")
             return
         }
-        var i = text.indexOf(q, start, ignoreCase = true)
-        if (i < 0) i = starts.first()
-        val no = starts.indexOfFirst { it == i } + 1
-        edit.requestFocus()
-        edit.setSelection(i, i + q.length)
-        scrollTo(i)
-        Toast.makeText(this, "Treffer " + no + " von " + total, Toast.LENGTH_SHORT).show()
+        hitNo = hitStarts.indexOfFirst { it >= start }.let { if (it < 0) 0 else it }
+        searchBar.visibility = android.view.View.VISIBLE
+        showHit()
     }
+
+    private fun showHit() {
+        if (hitStarts.isEmpty()) return
+        hitNo = hitNo.coerceIn(0, hitStarts.size - 1)
+        val p = hitStarts[hitNo]
+        curSpan?.let { edit.text.removeSpan(it) }
+        val sp = android.text.style.BackgroundColorSpan(0xCCFF9800.toInt())
+        edit.text.setSpan(sp, p, (p + lastQuery.length).coerceAtMost(edit.text.length), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        curSpan = sp
+        edit.setSelection(p)
+        scrollTo(p)
+        tvHitCount.text = (hitNo + 1).toString() + " / " + hitStarts.size
+    }
+
+    private fun stepHit(d: Int) {
+        val n = hitStarts.size
+        if (n == 0) return
+        hitNo = ((hitNo + d) % n + n) % n
+        showHit()
+    }
+
+    private fun buildSearchBar(): LinearLayout {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundResource(R.drawable.bg_box_dark)
+            setPadding(dp(6), dp(2), dp(4), dp(2))
+            visibility = android.view.View.GONE
+            elevation = dp(6).toFloat()
+        }
+        bar.addView(iconButton("✕", "Suche schließen") { closeSearch() }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        tvHitCount = TextView(this).apply { textSize = 15f; setTextColor(CREME); setPadding(dp(2), 0, dp(8), 0) }
+        bar.addView(tvHitCount)
+        bar.addView(holdButton("▲", -1), LinearLayout.LayoutParams(dp(52), dp(44)))
+        bar.addView(holdButton("▼", 1), LinearLayout.LayoutParams(dp(52), dp(44)))
+        return bar
+    }
+
+    /** Pfeil: kurz tippen = nächster Treffer; gedrückt halten = Schnellblättern (wird allmählich schneller). */
+    private fun holdButton(label: String, dir: Int): TextView =
+        iconButton(label, if (dir < 0) "Voriger Treffer" else "Nächster Treffer") { }.apply {
+            setOnTouchListener { v, ev ->
+                when (ev.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        stepHit(dir)
+                        val r = object : Runnable {
+                            var n = 0
+                            override fun run() {
+                                n++
+                                stepHit(dir * (if (n > 25) 10 else if (n > 10) 3 else 1))
+                                hitHandler.postDelayed(this, 90)
+                            }
+                        }
+                        hitRepeat = r
+                        hitHandler.postDelayed(r, 450)
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        hitRepeat?.let { hitHandler.removeCallbacks(it) }
+                        hitRepeat = null
+                        if (ev.actionMasked == android.view.MotionEvent.ACTION_UP) v.performClick()
+                        true
+                    }
+                    else -> true
+                }
+            }
+        }
 
     private fun scrollTo(off: Int) {
         edit.post {
@@ -1253,7 +1268,7 @@ class TextActivity : AppCompatActivity() {
     private fun showTable(on: Boolean) {
         val list = sheets
         tableMode = on && list != null
-        scroll.visibility = if (tableMode) android.view.View.GONE else android.view.View.VISIBLE
+        scrollFrame.visibility = if (tableMode) android.view.View.GONE else android.view.View.VISIBLE
         tableBox.visibility = if (tableMode) android.view.View.VISIBLE else android.view.View.GONE
         fmtBar.visibility = if (tableMode) android.view.View.GONE else android.view.View.VISIBLE
         if (tableMode) renderSheet()
