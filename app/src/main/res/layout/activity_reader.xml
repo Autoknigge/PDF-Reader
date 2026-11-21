@@ -177,7 +177,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="📂  PDF öffnen"
+                        android:text="📂  Datei öffnen (PDF, Text, Word …)"
                         android:textColor="@color/auf_gold"
                         android:textSize="20sp"
                         android:textStyle="bold" />
@@ -191,6 +191,7 @@
 
                     <TextView
                         android:id="@+id/btnOpenText"
+                        android:visibility="gone"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_marginEnd="6dp"
@@ -210,7 +211,7 @@
                         android:id="@+id/btnNewNote"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
+                        android:layout_marginStart="0dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_box_dark"
                         android:clickable="true"

@@ -61,28 +61,36 @@ class MainActivity : AppCompatActivity() {
     private var ignoreSave = false
     private var searchHlPage = -1
 
+    /** Ein Dialog für alles: PDFs gehen in den Leser, Text, Word, E-Book, Tabellen usw. in den Text-Bildschirm. */
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            try {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (ignored: SecurityException) {
+            val type = contentResolver.getType(uri) ?: ""
+            val name = try {
+                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                } ?: ""
+            } catch (e: Exception) {
+                ""
             }
-            open(uri)
-        }
-    }
-
-    private val textPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            } catch (ignored: Exception) {
+            val isPdf = type == "application/pdf" || name.lowercase().endsWith(".pdf")
+            if (isPdf) {
                 try {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                } catch (ignored2: Exception) {
+                } catch (ignored: SecurityException) {
                 }
+                open(uri)
+            } else {
+                try {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                } catch (ignored: Exception) {
+                    try {
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    } catch (ignored2: Exception) {
+                    }
+                }
+                startActivity(Intent(this, TextActivity::class.java).setAction(Intent.ACTION_VIEW).setData(uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
             }
-            startActivity(Intent(this, TextActivity::class.java).setAction(Intent.ACTION_VIEW).setData(uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
         }
     }
 
@@ -116,16 +124,6 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnBack).setOnClickListener { goBack() }
         findViewById<View>(R.id.btnOpen).setOnClickListener { pick() }
         findViewById<View>(R.id.btnOpenBig).setOnClickListener { pick() }
-        findViewById<View>(R.id.btnOpenText).setOnClickListener {
-            textPicker.launch(arrayOf(
-                "text/*", "application/json", "application/xml",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "application/vnd.oasis.opendocument.text", "application/epub+zip",
-                "application/rtf", "application/xhtml+xml",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "application/vnd.oasis.opendocument.spreadsheet", "application/octet-stream"
-            ))
-        }
         findViewById<View>(R.id.btnNewNote).setOnClickListener {
             startActivity(Intent(this, TextActivity::class.java).putExtra(TextActivity.EXTRA_NEW, true))
         }
@@ -189,7 +187,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun pick() {
-        if (!loading) picker.launch(arrayOf("application/pdf"))
+        if (!loading) picker.launch(arrayOf(
+            "application/pdf", "text/*", "application/json", "application/xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.oasis.opendocument.text", "application/epub+zip",
+            "application/rtf", "application/xhtml+xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.oasis.opendocument.spreadsheet", "application/octet-stream"
+        ))
     }
 
     /** Zurück: zuerst vom geöffneten Dokument zum Startbildschirm, dann die App schließen. */
