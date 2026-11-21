@@ -30,6 +30,28 @@ class ComicActivity : AppCompatActivity() {
     private lateinit var tvPage: TextView
     private lateinit var tvTitle: TextView
     private lateinit var adManager: AdManager
+    private lateinit var library: Library
+    private var uriKey = ""
+    private var docName = "Comic"
+    private var srcUri: Uri? = null
+
+    private val saveCopy = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/vnd.comicbook+zip")
+    ) { target ->
+        if (target != null) {
+            worker.execute {
+                val ok = try {
+                    contentResolver.openOutputStream(target, "wt")?.use { out ->
+                        File(cacheDir, "comic.cbz").inputStream().use { it.copyTo(out, 64 * 1024) }
+                    } ?: throw IOException()
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+                runOnUiThread { Toast.makeText(this, if (ok) "Gespeichert." else "Das Speichern ist fehlgeschlagen.", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
 
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
 
@@ -57,12 +79,19 @@ class ComicActivity : AppCompatActivity() {
         top.addView(tvTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         tvPage = TextView(this).apply { textSize = 15f; setTextColor(0xFFF8E7A4.toInt()) }
         top.addView(tvPage)
+        top.addView(TextView(this).apply {
+            text = "⋮"; textSize = 24f; setTextColor(0xFFD4AF37.toInt()); gravity = Gravity.CENTER
+            contentDescription = "Mehr"; setOnClickListener { openMenu() }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         pager = ViewPager2(this).apply {
             orientation = ViewPager2.ORIENTATION_HORIZONTAL
             registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
-                override fun onPageSelected(position: Int) { updatePage() }
+                override fun onPageSelected(position: Int) {
+                    updatePage()
+                    if (uriKey.isNotEmpty()) library.setPage(uriKey, position)
+                }
             })
         }
         root.addView(pager, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -73,6 +102,7 @@ class ComicActivity : AppCompatActivity() {
         adManager = AdManager(this, adBox, null)
         Intro.run(this) { adManager.start() }
 
+        library = Library(this)
         val u = intent.data
         if (u == null) {
             Toast.makeText(this, "Keine Datei übergeben.", Toast.LENGTH_LONG).show()
@@ -119,7 +149,10 @@ class ComicActivity : AppCompatActivity() {
     }
 
     private fun open(u: Uri) {
-        tvTitle.text = queryName(u) ?: "Comic"
+        srcUri = u
+        uriKey = u.toString()
+        docName = queryName(u) ?: "Comic"
+        tvTitle.text = docName
         tvPage.text = "wird geöffnet …"
         worker.execute {
             val r = runCatching {
@@ -142,10 +175,12 @@ class ComicActivity : AppCompatActivity() {
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 r.onSuccess { (z, list) ->
-                    try { Library(this).touch(u.toString(), queryName(u) ?: "Comic", 0, "comic") } catch (ignored: Exception) {}
                     zip = z
                     names = list
+                    val last = library.page(uriKey)
+                    library.touch(uriKey, docName, list.size, "comic")
                     pager.adapter = Adapter()
+                    pager.setCurrentItem(last.coerceIn(0, list.size - 1), false)
                     updatePage()
                 }.onFailure {
                     Toast.makeText(this, it.message ?: "Das Comic konnte nicht geöffnet werden.", Toast.LENGTH_LONG).show()
@@ -153,6 +188,76 @@ class ComicActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** Gleiche Reihenfolge wie in den anderen Menüs; nicht Zutreffendes (Suche, Inhaltsverzeichnis, Drucken) fehlt einfach. */
+    private fun openMenu() {
+        if (names.isEmpty()) return
+        val page = pager.currentItem
+        val marked = library.isBookmarked(uriKey, page)
+        val marks = library.bookmarks(uriKey)
+        val e = ArrayList<MenuUi.Entry>()
+        e.add(MenuUi.Entry("🔖", if (marked) "Lesezeichen entfernen (Seite ${page + 1})" else "Lesezeichen setzen (Seite ${page + 1})") {
+            val now = library.toggleBookmark(uriKey, page)
+            Toast.makeText(this, if (now) "Lesezeichen gesetzt." else "Lesezeichen entfernt.", Toast.LENGTH_SHORT).show()
+        })
+        if (marks.isNotEmpty()) e.add(MenuUi.Entry("📚", "Lesezeichen anzeigen (${marks.size})") { bookmarkList() })
+        e.add(MenuUi.Entry("📝", "Notizen und Zitate") {
+            startActivity(
+                android.content.Intent(this, TextActivity::class.java)
+                    .putExtra(TextActivity.EXTRA_PDFNOTE_KEY, Notes.key(uriKey))
+                    .putExtra(TextActivity.EXTRA_PDFNOTE_TITLE, docName)
+                    .putExtra(TextActivity.EXTRA_PDFNOTE_PAGE, page)
+            )
+        })
+        e.add(MenuUi.Entry("📤", "Senden an …") { shareComic() })
+        e.add(MenuUi.Entry("💾", "Speichern unter …") { saveCopy.launch(docName) })
+        // Nur bei Comics
+        e.add(MenuUi.Entry("🔢", "Zu Seite springen …") { gotoDialog() })
+        MenuUi.show(this, docName, e)
+    }
+
+    private fun bookmarkList() {
+        val marks = library.bookmarks(uriKey)
+        if (marks.isEmpty()) return
+        MenuUi.show(this, "Lesezeichen", marks.map { m ->
+            MenuUi.Entry("🔖", "Seite ${m + 1}") { pager.setCurrentItem(m.coerceIn(0, names.size - 1), false) }
+        })
+    }
+
+    private fun shareComic() {
+        val u = srcUri ?: return
+        try {
+            startActivity(
+                android.content.Intent.createChooser(
+                    android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "application/vnd.comicbook+zip"
+                        putExtra(android.content.Intent.EXTRA_STREAM, u)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }, "Senden an"
+                )
+            )
+        } catch (e: Exception) {
+            Toast.makeText(this, "Keine App zum Senden gefunden.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun gotoDialog() {
+        val box = android.widget.EditText(this).apply {
+            hint = "Seite (1 bis ${names.size})"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setSingleLine(true)
+        }
+        val wrap = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(box) }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Zu Seite springen")
+            .setView(wrap)
+            .setPositiveButton("Los") { _, _ ->
+                val n = box.text.toString().toIntOrNull()
+                if (n != null) pager.setCurrentItem((n - 1).coerceIn(0, names.size - 1), false)
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
     }
 
     private fun decode(name: String): android.graphics.Bitmap? = try {

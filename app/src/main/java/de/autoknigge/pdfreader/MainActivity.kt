@@ -696,7 +696,7 @@ class MainActivity : AppCompatActivity() {
                 setTextColor(getColor(R.color.text_hell))
             })
             texts.addView(TextView(this).apply {
-                text = if (doc.kind == "pdf") (if (doc.pages > 0) "Weiter auf Seite ${doc.page + 1} von ${doc.pages}" else "") else kindLabel(doc.name, doc.kind)
+                text = if (doc.kind == "pdf" || doc.kind == "comic") (if (doc.pages > 0) "Weiter auf Seite ${doc.page + 1} von ${doc.pages}" else "") else kindLabel(doc.name, doc.kind)
                 textSize = 13f
                 setTextColor(getColor(R.color.text_gedimmt))
             })
