@@ -459,8 +459,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun openPdfNotes(title: String, page: Int) {
         val id = currentUri?.toString() ?: src0Key(title)
-        val key = java.security.MessageDigest.getInstance("SHA-1").digest(id.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+        val key = Notes.key(id)
         startActivity(
             Intent(this, TextActivity::class.java)
                 .putExtra(TextActivity.EXTRA_PDFNOTE_KEY, key)
@@ -833,7 +832,8 @@ class MainActivity : AppCompatActivity() {
             menuDialog(
                 "Textstelle",
                 listOf("▶️" to "Ab hier vorlesen", "📝" to "Nur diesen Absatz vorlesen", "📄" to "Nur diese Seite vorlesen",
-                    "📋" to "Absatz kopieren", "📋" to "Ab hier bis Seitenende kopieren", "📋" to "Ganze Seite kopieren"),
+                    "📋" to "Absatz kopieren", "📋" to "Ab hier bis Seitenende kopieren", "📋" to "Ganze Seite kopieren",
+                    "💬" to "Absatz als Zitat merken"),
                 "Abbrechen",
                 onDismiss = {
                     // Auswahl ohne Vorlesen: Markierung wieder entfernen.
@@ -842,7 +842,7 @@ class MainActivity : AppCompatActivity() {
             ) { which ->
                 if (which >= 3) {
                     val (from, to) = when (which) {
-                        3 -> loc.paraFirst to loc.paraLast
+                        3, 6 -> loc.paraFirst to loc.paraLast
                         4 -> loc.paraFirst to Int.MAX_VALUE
                         else -> 0 to Int.MAX_VALUE
                     }
@@ -850,9 +850,15 @@ class MainActivity : AppCompatActivity() {
                         if (txt.isEmpty()) {
                             toast("Hier wurde kein Text erkannt.")
                         } else {
-                            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            cm.setPrimaryClip(android.content.ClipData.newPlainText("PDF-Text", txt))
-                            toast("Kopiert: ${txt.length} Zeichen")
+                            if (which == 6) {
+                                val id = currentUri?.toString() ?: ("name:" + currentTitle)
+                                val ok = Notes.addQuote(this, Notes.key(id), txt, currentTitle.removeSuffix(".pdf"), page + 1)
+                                toast(if (ok) "Zitat gemerkt (Menü ⋮, Notizen zu dieser PDF)." else "Das Zitat konnte nicht gespeichert werden.")
+                            } else {
+                                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("PDF-Text", txt))
+                                toast("Kopiert: ${txt.length} Zeichen")
+                            }
                         }
                     }
                     return@menuDialog

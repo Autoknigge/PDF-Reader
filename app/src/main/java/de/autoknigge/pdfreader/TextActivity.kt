@@ -33,7 +33,10 @@ import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 import android.text.InputType
 import android.text.TextWatcher
+import android.view.ActionMode
 import android.view.Gravity
+import android.view.Menu
+import android.view.MenuItem
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -121,6 +124,46 @@ class TextActivity : AppCompatActivity() {
     private var focusReq: AudioFocusRequest? = null
     private var dark = true
     private var sizeSp = 16f
+    private var profil = 0
+    private var fontNo = 0
+    private var zeile = 1.15f
+    private var ausr = 0       // 0 linksbündig, 1 Blocksatz, 2 Blocksatz mit Silbentrennung
+    private var randDp = 14
+
+    private class Profil(val name: String, val bg: Int, val fg: Int, val hint: Int, val dark: Boolean)
+
+    private val profile = listOf(
+        Profil("Dunkelgrün", TANNE_DUNKEL, CREME, 0xFFCFC38E.toInt(), true),
+        Profil("Hell", 0xFFFFFFFF.toInt(), 0xFF111111.toInt(), 0xFF777777.toInt(), false),
+        Profil("Sepia", 0xFFF3E5C8.toInt(), 0xFF4A3724.toInt(), 0xFF8A7458.toInt(), false),
+        Profil("Grau", 0xFF3A3A3A.toInt(), 0xFFE6E6E6.toInt(), 0xFF9A9A9A.toInt(), true),
+        Profil("Nacht (schwarz)", 0xFF000000.toInt(), 0xFFC8C8C8.toInt(), 0xFF777777.toInt(), true)
+    )
+
+    /** Name, Datei normal, Datei fett (null = Systemschrift). */
+    private val fonts = listOf(
+        Triple("Standard", null as String?, null as String?),
+        Triple("Serif (Systemschrift mit Serifen)", "serif", null),
+        Triple("Lora (Serif, angenehm zum Lesen)", "Lora-Regular.ttf", "Lora-Bold.ttf"),
+        Triple("Atkinson Hyperlegible (sehr gut lesbar)", "AtkinsonHyperlegible-Regular.ttf", "AtkinsonHyperlegible-Bold.ttf"),
+        Triple("OpenDyslexic (bei Leseschwäche)", "OpenDyslexic-Regular.otf", "OpenDyslexic-Bold.otf"),
+        Triple("Comic Neue (locker)", "ComicNeue-Regular.ttf", "ComicNeue-Bold.ttf"),
+        Triple("Schreibmaschine (Systemschrift)", "monospace", null)
+    )
+
+    private fun fontFace(): Typeface? {
+        val t = fonts.getOrNull(fontNo) ?: return null
+        val n = t.second ?: return null
+        return try {
+            when (n) {
+                "serif" -> Typeface.SERIF
+                "monospace" -> Typeface.MONOSPACE
+                else -> Typeface.createFromAsset(assets, "fonts/$n")
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     private val saveAs = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { u ->
         if (u != null && pdfNote) {
@@ -178,8 +221,13 @@ class TextActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        dark = prefs.getBoolean("text_dunkel", true)
+        profil = prefs.getInt("text_profil", if (prefs.getBoolean("text_dunkel", true)) 0 else 1).coerceIn(0, profile.size - 1)
+        dark = profile[profil].dark
         sizeSp = prefs.getFloat("text_groesse", 16f)
+        fontNo = prefs.getInt("text_font", 0).coerceIn(0, fonts.size - 1)
+        zeile = prefs.getFloat("text_zeile", 1.15f).coerceIn(1.0f, 2.0f)
+        ausr = prefs.getInt("text_ausr", 0).coerceIn(0, 2)
+        randDp = prefs.getInt("text_rand", 14).coerceIn(0, 48)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -235,6 +283,7 @@ class TextActivity : AppCompatActivity() {
         buildTableUi()
         root.addView(tableBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         applyLook()
+        setupQuoteAction()
 
         edit.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -525,11 +574,10 @@ class TextActivity : AppCompatActivity() {
         val items = ArrayList<Pair<String, () -> Unit>>()
         items.add("Suchen …" to { searchDialog() })
         items.add("Weitersuchen" to { findNext() })
+        items.add("Darstellung: Schrift, Farbe, Ausrichtung …" to { lookDialog() })
         items.add("Schrift größer" to { setSize(sizeSp + 2f) })
         items.add("Schrift kleiner" to { setSize(sizeSp - 2f) })
-        items.add((if (dark) "Heller Hintergrund" else "Dunkler Hintergrund") to {
-            dark = !dark; prefs.edit().putBoolean("text_dunkel", dark).apply(); applyLook()
-        })
+        if (!pdfNote && uri != null) items.add("Notizen und Zitate zu dieser Datei" to { openNotes() })
         items.add("Vorlesetempo …" to { tempoDialog() })
         if (pdfNote) items.add("Seitenverweis einfügen (S. ${pdfNotePage + 1})" to { insertAtCursor("S. ${pdfNotePage + 1}: ") })
         items.add("Alles markieren und kopieren" to { copyAll() })
@@ -831,6 +879,88 @@ class TextActivity : AppCompatActivity() {
         edit.setSelection(i, i + lastQuery.length)
     }
 
+    private fun noteKey(): String? = uri?.let { Notes.key(it.toString()) }
+
+    private fun openNotes() {
+        val k = noteKey() ?: return toast("Zuerst eine Datei öffnen.")
+        startActivity(
+            Intent(this, TextActivity::class.java)
+                .putExtra(EXTRA_PDFNOTE_KEY, k)
+                .putExtra(EXTRA_PDFNOTE_TITLE, name)
+                .putExtra(EXTRA_PDFNOTE_PAGE, 0)
+        )
+    }
+
+    private fun saveQuote() {
+        val a = minOf(edit.selectionStart, edit.selectionEnd)
+        val b = maxOf(edit.selectionStart, edit.selectionEnd)
+        if (a < 0 || a == b) return
+        val k = noteKey() ?: return toast("Zitate werden zu einer geöffneten Datei gesammelt.")
+        val ok = Notes.addQuote(this, k, edit.text.substring(a, b), name.substringBeforeLast('.', name))
+        toast(if (ok) "Zitat gemerkt (Menü ⋮, Notizen und Zitate)." else "Das Zitat konnte nicht gespeichert werden.")
+    }
+
+    private fun setupQuoteAction() {
+        edit.customSelectionActionModeCallback = object : ActionMode.Callback {
+            override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                if (!pdfNote) menu.add(0, 9001, 0, "Zitat")
+                return true
+            }
+            override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
+            override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+                if (item.itemId == 9001) { saveQuote(); mode.finish(); return true }
+                return false
+            }
+            override fun onDestroyActionMode(mode: ActionMode) {}
+        }
+    }
+
+    private fun lookDialog() {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        fun label(t: String) = TextView(this).apply { text = t; textSize = 13f; setPadding(0, dp(12), 0, dp(2)) }
+        fun spinner(items: List<String>, sel: Int, on: (Int) -> Unit) = android.widget.Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(this@TextActivity, android.R.layout.simple_spinner_dropdown_item, items)
+            setSelection(sel)
+            var first = true
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                    if (first) { first = false; return }
+                    on(pos)
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+        }
+        fun bar(max: Int, now: Int, on: (Int) -> Unit) = android.widget.SeekBar(this).apply {
+            this.max = max; progress = now
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) { if (fromUser) on(p) }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
+            })
+        }
+        box.addView(label("Farbprofil"))
+        box.addView(spinner(profile.map { it.name }, profil) { profil = it; dark = profile[it].dark; prefs.edit().putInt("text_profil", it).apply(); applyLook() })
+        box.addView(label("Schriftart"))
+        box.addView(spinner(fonts.map { it.first }, fontNo) { fontNo = it; prefs.edit().putInt("text_font", it).apply(); applyLook() })
+        box.addView(label("Text ausrichten"))
+        box.addView(spinner(listOf("Linksbündig", "Blocksatz", "Blocksatz mit Silbentrennung"), ausr) { ausr = it; prefs.edit().putInt("text_ausr", it).apply(); applyLook() })
+        box.addView(label("Schriftgröße"))
+        box.addView(bar(30, (sizeSp - 10f).toInt().coerceIn(0, 30)) { sizeSp = 10f + it; prefs.edit().putFloat("text_groesse", sizeSp).apply(); applyLook() })
+        box.addView(label("Zeilenabstand"))
+        box.addView(bar(10, ((zeile - 1.0f) * 10f).toInt().coerceIn(0, 10)) { zeile = 1.0f + it / 10f; prefs.edit().putFloat("text_zeile", zeile).apply(); applyLook() })
+        box.addView(label("Seitenrand"))
+        box.addView(bar(48, randDp) { randDp = it; prefs.edit().putInt("text_rand", it).apply(); applyLook() })
+        box.addView(TextView(this).apply {
+            text = "Schriften: Lora, Atkinson Hyperlegible, OpenDyslexic und Comic Neue (SIL Open Font License)."
+            textSize = 11f; setPadding(0, dp(14), 0, dp(6))
+        })
+        AlertDialog.Builder(this)
+            .setTitle("Darstellung")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Fertig", null)
+            .show()
+    }
+
     private fun setSize(v: Float) {
         sizeSp = v.coerceIn(10f, 40f)
         prefs.edit().putFloat("text_groesse", sizeSp).apply()
@@ -877,7 +1007,7 @@ class TextActivity : AppCompatActivity() {
 
     private fun renderSheet() {
         val list = sheets ?: return
-        tableBox.setBackgroundColor(if (dark) TANNE_DUNKEL else 0xFFFFFFFF.toInt())
+        tableBox.setBackgroundColor(profile[profil].bg)
         sheetTabs.removeAllViews()
         sheetTabs.visibility = if (list.size > 1) android.view.View.VISIBLE else android.view.View.GONE
         list.forEachIndexed { i, sh ->
@@ -898,8 +1028,8 @@ class TextActivity : AppCompatActivity() {
     private fun addRows(n: Int) {
         val rows = sheets?.getOrNull(sheetNo)?.rows ?: return
         val grid = if (dark) 0xFF3A4A3F.toInt() else 0xFFBBBBBB.toInt()
-        val fg = if (dark) CREME else 0xFF111111.toInt()
-        val bg = if (dark) TANNE_DUNKEL else 0xFFFFFFFF.toInt()
+        val fg = profile[profil].fg
+        val bg = profile[profil].bg
         val end = minOf(rows.size, shownRows + n)
         for (r in shownRows until end) {
             val tr = android.widget.TableRow(this).apply { setBackgroundColor(grid) }
@@ -925,11 +1055,18 @@ class TextActivity : AppCompatActivity() {
 
     private fun applyLook() {
         if (::tableBox.isInitialized && tableMode) renderSheet()
+        val p = profile[profil]
         edit.textSize = sizeSp
-        edit.setTextColor(if (dark) CREME else 0xFF111111.toInt())
-        edit.setHintTextColor(if (dark) 0xFFCFC38E.toInt() else 0xFF777777.toInt())
-        edit.setBackgroundColor(if (dark) TANNE_DUNKEL else 0xFFFFFFFF.toInt())
+        edit.typeface = fontFace() ?: Typeface.DEFAULT
+        edit.setTextColor(p.fg)
+        edit.setHintTextColor(p.hint)
+        edit.setBackgroundColor(p.bg)
         edit.highlightColor = 0x66D4AF37
+        edit.setLineSpacing(0f, zeile)
+        edit.setPadding(dp(randDp), dp(10), dp(randDp), dp(10))
+        edit.justificationMode = if (ausr >= 1) android.text.Layout.JUSTIFICATION_MODE_INTER_WORD else android.text.Layout.JUSTIFICATION_MODE_NONE
+        edit.breakStrategy = if (ausr >= 1) android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY else android.text.Layout.BREAK_STRATEGY_SIMPLE
+        edit.hyphenationFrequency = if (ausr == 2) android.text.Layout.HYPHENATION_FREQUENCY_NORMAL else android.text.Layout.HYPHENATION_FREQUENCY_NONE
     }
 
     private fun copyAll() {
