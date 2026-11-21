@@ -73,7 +73,10 @@ class MainActivity : AppCompatActivity() {
                 ""
             }
             val isPdf = type == "application/pdf" || name.lowercase().endsWith(".pdf")
-            if (isPdf) {
+            val isComic = name.lowercase().endsWith(".cbz") || type == "application/vnd.comicbook+zip" || type == "application/x-cbz"
+            if (isComic) {
+                startActivity(Intent(this, ComicActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            } else if (isPdf) {
                 try {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (ignored: SecurityException) {
@@ -189,6 +192,7 @@ class MainActivity : AppCompatActivity() {
     private fun pick() {
         if (!loading) picker.launch(arrayOf(
             "application/pdf", "text/*", "application/json", "application/xml",
+            "application/zip", "application/vnd.comicbook+zip", "application/x-cbz", "application/x-fictionbook+xml",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "application/vnd.oasis.opendocument.text", "application/epub+zip",
             "application/rtf", "application/xhtml+xml",
@@ -453,8 +457,26 @@ class MainActivity : AppCompatActivity() {
                     .putExtra(SignActivity.EXTRA_NAME, src.name)
             )
         }
+        items.add("📑" to "Inhaltsverzeichnis"); actions.add { showPdfToc(src) }
         items.add("📝" to "Notizen zu dieser PDF"); actions.add { openPdfNotes(src.name, page) }
         menuDialog(src.name, items, "Schließen") { which -> actions[which]() }
+    }
+
+    private fun showPdfToc(src: PdfSource) {
+        toast("Inhaltsverzeichnis wird gesucht …")
+        Thread {
+            val items = PdfToc.load(src.file)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (items.isEmpty()) {
+                    toast("Diese PDF hat kein Inhaltsverzeichnis.")
+                } else {
+                    menuDialog("📑  Inhaltsverzeichnis", items.map { "" to ("      ".repeat(it.level.coerceAtMost(3)) + it.title + "  ·  S. " + (it.page + 1)) }, "Schließen") { which ->
+                        pager.setCurrentItem(items[which].page, false)
+                    }
+                }
+            }
+        }.start()
     }
 
     private fun openPdfNotes(title: String, page: Int) {

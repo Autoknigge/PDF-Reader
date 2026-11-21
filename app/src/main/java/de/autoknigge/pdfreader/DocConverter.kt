@@ -16,12 +16,13 @@ object DocConverter {
     private const val MAX_ENTRY = 16 * 1024 * 1024
     private const val MAX_TEXT = 6_000_000
 
-    enum class Kind { TEXT, DOCX, ODT, EPUB, HTML, RTF, XLSX, ODS }
+    enum class Kind { TEXT, DOCX, ODT, EPUB, HTML, RTF, XLSX, ODS, FB2 }
 
     fun kindOf(name: String, mime: String?): Kind {
         val n = name.lowercase()
         return when {
             n.endsWith(".docx") -> Kind.DOCX
+            n.endsWith(".fb2") -> Kind.FB2
             n.endsWith(".odt") -> Kind.ODT
             n.endsWith(".xlsx") || n.endsWith(".xlsm") -> Kind.XLSX
             n.endsWith(".ods") -> Kind.ODS
@@ -29,6 +30,7 @@ object DocConverter {
             n.endsWith(".html") || n.endsWith(".htm") || n.endsWith(".xhtml") -> Kind.HTML
             n.endsWith(".rtf") -> Kind.RTF
             mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> Kind.DOCX
+            mime == "application/x-fictionbook+xml" || mime == "application/x-fictionbook" -> Kind.FB2
             mime == "application/vnd.oasis.opendocument.text" -> Kind.ODT
             mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> Kind.XLSX
             mime == "application/vnd.oasis.opendocument.spreadsheet" -> Kind.ODS
@@ -56,6 +58,7 @@ object DocConverter {
             Kind.DOCX -> docx(bytes)
             Kind.ODT -> odt(bytes)
             Kind.XLSX, Kind.ODS -> sheetsToText(sheets(kind, bytes))
+            Kind.FB2 -> richToText(fb2Rich(bytes))
             Kind.EPUB -> epub(bytes)
             Kind.HTML -> html(decode(bytes))
             Kind.RTF -> rtf(decode(bytes))
@@ -499,6 +502,221 @@ object DocConverter {
             }
         }
         return parts.joinToString("/")
+    }
+
+    // ---------------------------------------------------------------- FB2 und EPUB mit Überschriften
+
+    fun richToText(paras: List<RichPara>): String =
+        paras.joinToString("\n") { p -> (if (p.bullet) "• " else "") + p.runs.joinToString("") { it.text } }
+
+    fun fb2Rich(bytes: ByteArray): List<RichPara> {
+        val head = ArrayList<RichPara>()
+        val out = ArrayList<RichPara>()
+        val p = parser(bytes)
+        var ev = p.eventType
+        var depth = 0
+        var inTitle = false
+        var inBinary = false
+        var inDesc = false
+        var inPara = false
+        var paraLevel = 0
+        var bold = 0
+        var ital = 0
+        var runs = ArrayList<RichRun>()
+        val titleBuf = StringBuilder()
+        var bookTitle = ""
+        val author = ArrayList<String>()
+        var cur = ""
+        var inAuthor = false
+        fun add(t: String) {
+            if (t.isEmpty()) return
+            val b = bold > 0
+            val i = ital > 0
+            val last = runs.lastOrNull()
+            if (last != null && last.bold == b && last.italic == i) runs[runs.size - 1] = RichRun(last.text + t, b, i)
+            else runs.add(RichRun(t, b, i))
+        }
+        fun flushPara() {
+            if (runs.isNotEmpty() && runs.any { it.text.isNotBlank() }) out.add(RichPara(paraLevel, false, runs))
+            runs = ArrayList()
+        }
+        while (ev != XmlPullParser.END_DOCUMENT) {
+            when (ev) {
+                XmlPullParser.START_TAG -> {
+                    cur = ln(p)
+                    when (cur) {
+                        "binary" -> inBinary = true
+                        "description" -> inDesc = true
+                        "author" -> if (inDesc) inAuthor = true
+                        "section" -> depth++
+                        "title" -> if (!inDesc) { inTitle = true; titleBuf.setLength(0) }
+                        "p", "v", "text-author" -> if (!inDesc) { inPara = true; paraLevel = 0; runs = ArrayList() }
+                        "subtitle" -> if (!inDesc) { inPara = true; paraLevel = 2; runs = ArrayList() }
+                        "strong" -> bold++
+                        "emphasis" -> ital++
+                        "empty-line" -> out.add(RichPara(0, false, emptyList()))
+                    }
+                }
+                XmlPullParser.END_TAG -> {
+                    val n = ln(p)
+                    when (n) {
+                        "binary" -> inBinary = false
+                        "description" -> inDesc = false
+                        "author" -> inAuthor = false
+                        "section" -> depth--
+                        "strong" -> if (bold > 0) bold--
+                        "emphasis" -> if (ital > 0) ital--
+                        "p", "v", "text-author", "subtitle" -> if (!inDesc) {
+                            if (inTitle) {
+                                val t = runs.joinToString("") { it.text }.trim()
+                                if (t.isNotEmpty()) { if (titleBuf.isNotEmpty()) titleBuf.append(' '); titleBuf.append(t) }
+                                runs = ArrayList()
+                            } else flushPara()
+                            inPara = false
+                        }
+                        "title" -> if (inTitle) {
+                            inTitle = false
+                            if (titleBuf.isNotBlank()) out.add(RichPara(if (depth <= 1) 1 else 2, false, listOf(RichRun(titleBuf.toString(), false, false))))
+                        }
+                    }
+                    cur = ""
+                }
+                XmlPullParser.TEXT -> if (!inBinary) {
+                    if (inDesc) {
+                        val t = p.text.trim()
+                        if (t.isNotEmpty()) when {
+                            cur == "book-title" && bookTitle.isEmpty() -> bookTitle = t
+                            inAuthor && (cur == "first-name" || cur == "middle-name" || cur == "last-name") -> author.add(t)
+                        }
+                    } else if (inPara) {
+                        add(p.text.replace('\n', ' ').replace(Regex("\\s{2,}"), " "))
+                    }
+                }
+            }
+            ev = p.next()
+        }
+        if (bookTitle.isNotEmpty()) head.add(RichPara(1, false, listOf(RichRun(bookTitle, false, false))))
+        if (author.isNotEmpty()) head.add(RichPara(0, false, listOf(RichRun(author.joinToString(" "), false, true))))
+        val all = head + out
+        if (all.none { it.runs.any { r -> r.text.isNotBlank() } }) throw IOException("In dieser Datei wurde kein Text gefunden.")
+        return all
+    }
+
+    fun epubRich(bytes: ByteArray): List<RichPara> {
+        val files = unzip(bytes)
+        val container = files["META-INF/container.xml"] ?: throw IOException("Das ist keine gültige EPUB-Datei.")
+        var opfPath: String? = null
+        parser(container).let { p ->
+            var ev = p.eventType
+            while (ev != XmlPullParser.END_DOCUMENT && opfPath == null) {
+                if (ev == XmlPullParser.START_TAG && ln(p) == "rootfile") opfPath = attr(p, "full-path")
+                ev = p.next()
+            }
+        }
+        val opf = opfPath ?: throw IOException("Das E-Book hat keine Inhaltsliste.")
+        val opfBytes = files[opf] ?: throw IOException("Das E-Book hat keine Inhaltsliste.")
+        val dir = if (opf.contains('/')) opf.substringBeforeLast('/') + "/" else ""
+        val manifest = HashMap<String, String>()
+        var navPath: String? = null
+        var ncxPath: String? = null
+        val spine = ArrayList<String>()
+        parser(opfBytes).let { p ->
+            var ev = p.eventType
+            while (ev != XmlPullParser.END_DOCUMENT) {
+                if (ev == XmlPullParser.START_TAG) {
+                    when (ln(p)) {
+                        "item" -> {
+                            val id = attr(p, "id")
+                            val href = attr(p, "href")
+                            if (id != null && href != null) {
+                                manifest[id] = href
+                                val props = attr(p, "properties") ?: ""
+                                val mt = attr(p, "media-type") ?: ""
+                                val full = resolve(dir, URLDecoder.decode(href.substringBefore('#'), "UTF-8"))
+                                if (props.split(' ').contains("nav")) navPath = full
+                                if (mt == "application/x-dtbncx+xml") ncxPath = full
+                            }
+                        }
+                        "itemref" -> attr(p, "idref")?.let { spine.add(it) }
+                    }
+                }
+                ev = p.next()
+            }
+        }
+        // Kapitelnamen aus Inhaltsverzeichnis (nav oder ncx): Datei -> erster Titel
+        val labels = HashMap<String, String>()
+        try {
+            val tocFile = navPath ?: ncxPath
+            val tb = tocFile?.let { files[it] }
+            if (tb != null) {
+                val base = tocFile!!.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
+                val p = parser(tb)
+                var ev = p.eventType
+                var pendingText = StringBuilder()
+                var inLabel = false
+                var href: String? = null
+                while (ev != XmlPullParser.END_DOCUMENT) {
+                    when (ev) {
+                        XmlPullParser.START_TAG -> when (ln(p)) {
+                            "a" -> { href = attr(p, "href"); pendingText = StringBuilder(); inLabel = true }
+                            "navPoint" -> { pendingText = StringBuilder() }
+                            "text" -> { inLabel = true }
+                            "content" -> attr(p, "src")?.let { src ->
+                                val path = resolve(base, URLDecoder.decode(src.substringBefore('#'), "UTF-8"))
+                                val t = pendingText.toString().trim()
+                                if (t.isNotEmpty() && !labels.containsKey(path)) labels[path] = t
+                            }
+                        }
+                        XmlPullParser.END_TAG -> when (ln(p)) {
+                            "a" -> {
+                                val h = href
+                                if (h != null) {
+                                    val path = resolve(base, URLDecoder.decode(h.substringBefore('#'), "UTF-8"))
+                                    val t = pendingText.toString().trim()
+                                    if (t.isNotEmpty() && !labels.containsKey(path)) labels[path] = t
+                                }
+                                inLabel = false; href = null
+                            }
+                            "text" -> inLabel = false
+                        }
+                        XmlPullParser.TEXT -> if (inLabel) pendingText.append(p.text)
+                    }
+                    ev = p.next()
+                }
+            }
+        } catch (ignored: Exception) {
+        }
+        val out = ArrayList<RichPara>()
+        var n = 0
+        for (id in spine) {
+            val href = manifest[id] ?: continue
+            val path = resolve(dir, URLDecoder.decode(href.substringBefore('#'), "UTF-8"))
+            val part = files[path] ?: continue
+            val lines = html(decode(part)).trim().split('\n').toMutableList()
+            if (lines.all { it.isBlank() }) continue
+            n++
+            var title = labels[path]
+            if (title == null) {
+                val first = lines.firstOrNull { it.isNotBlank() }?.trim()
+                if (first != null && first.length <= 80) {
+                    title = first
+                    lines.removeAt(lines.indexOfFirst { it.isNotBlank() })
+                }
+            } else {
+                // erste Zeile ist oft der gleiche Titel: nicht doppelt zeigen
+                val idx = lines.indexOfFirst { it.isNotBlank() }
+                if (idx >= 0 && lines[idx].trim().equals(title, ignoreCase = true)) lines.removeAt(idx)
+            }
+            out.add(RichPara(1, false, listOf(RichRun(title ?: "Kapitel $n", false, false))))
+            var prevEmpty = true
+            for (l in lines) {
+                val t = l.trim()
+                if (t.isEmpty()) { if (!prevEmpty) out.add(RichPara(0, false, emptyList())); prevEmpty = true } else { out.add(RichPara(0, false, listOf(RichRun(t, false, false)))); prevEmpty = false }
+            }
+            if (out.size > 400000) break
+        }
+        if (out.isEmpty()) throw IOException("In dieser Datei wurde kein Text gefunden.")
+        return out
     }
 
     // ---------------------------------------------------------------- HTML

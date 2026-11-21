@@ -400,7 +400,11 @@ class TextActivity : AppCompatActivity() {
             var sh: List<DocConverter.Sheet>? = null
             var own = false
             val result = runCatching<CharSequence> {
-                if (kind == DocConverter.Kind.DOCX) {
+                if (kind == DocConverter.Kind.FB2 || kind == DocConverter.Kind.EPUB) {
+                    val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
+                        ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
+                    buildSpannable(if (kind == DocConverter.Kind.FB2) DocConverter.fb2Rich(bytes) else DocConverter.epubRich(bytes))
+                } else if (kind == DocConverter.Kind.DOCX) {
                     val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
                         ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
                     own = DocConverter.isOwnDocx(bytes)
@@ -574,6 +578,7 @@ class TextActivity : AppCompatActivity() {
         val items = ArrayList<Pair<String, () -> Unit>>()
         items.add("Suchen …" to { searchDialog() })
         items.add("Weitersuchen" to { findNext() })
+        if (!pdfNote && headings().isNotEmpty()) items.add("Inhaltsverzeichnis" to { tocDialog() })
         items.add("Darstellung: Schrift, Farbe, Ausrichtung …" to { lookDialog() })
         items.add("Schrift größer" to { setSize(sizeSp + 2f) })
         items.add("Schrift kleiner" to { setSize(sizeSp - 2f) })
@@ -802,6 +807,7 @@ class TextActivity : AppCompatActivity() {
 
     private fun makePdf(): ByteArray {
         val src = SpannableString(edit.text)
+        for (sp in src.getSpans(0, src.length, android.text.style.BackgroundColorSpan::class.java)) src.removeSpan(sp)
         if (src.isBlank()) throw IOException("leer")
         val pageW = 595
         val pageH = 842
@@ -867,16 +873,91 @@ class TextActivity : AppCompatActivity() {
         findFrom(edit.selectionEnd.coerceAtLeast(0))
     }
 
+    private val hitSpans = ArrayList<Any>()
+
+    private fun clearHits() {
+        for (sp in hitSpans) edit.text.removeSpan(sp)
+        hitSpans.clear()
+    }
+
     private fun findFrom(start: Int) {
         val text = edit.text.toString()
-        var i = text.indexOf(lastQuery, start, ignoreCase = true)
-        if (i < 0 && start > 0) i = text.indexOf(lastQuery, 0, ignoreCase = true)
-        if (i < 0) {
-            toast("„$lastQuery“ nicht gefunden.")
+        clearHits()
+        val q = lastQuery
+        if (q.isEmpty()) return
+        // alle Treffer zählen und (bis 3000) hell markieren
+        var total = 0
+        var pos = text.indexOf(q, 0, ignoreCase = true)
+        val starts = ArrayList<Int>()
+        while (pos >= 0) {
+            total++
+            if (starts.size < 100000) starts.add(pos)
+            if (hitSpans.size < 3000) {
+                val sp = android.text.style.BackgroundColorSpan(0x99FFEB3B.toInt())
+                edit.text.setSpan(sp, pos, pos + q.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                hitSpans.add(sp)
+            }
+            pos = text.indexOf(q, pos + q.length.coerceAtLeast(1), ignoreCase = true)
+        }
+        if (total == 0) {
+            toast("„$q“ nicht gefunden.")
             return
         }
+        var i = text.indexOf(q, start, ignoreCase = true)
+        if (i < 0) i = starts.first()
+        val no = starts.indexOfFirst { it == i } + 1
         edit.requestFocus()
-        edit.setSelection(i, i + lastQuery.length)
+        edit.setSelection(i, i + q.length)
+        scrollTo(i)
+        Toast.makeText(this, "Treffer " + no + " von " + total, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun scrollTo(off: Int) {
+        edit.post {
+            val l = edit.layout ?: return@post
+            scroll.smoothScrollTo(0, (l.getLineTop(l.getLineForOffset(off.coerceIn(0, edit.text.length))) - dp(24)).coerceAtLeast(0))
+        }
+    }
+
+    /** Überschriften des Textes: Titel, Stufe, Position. */
+    private fun headings(): List<Triple<String, Int, Int>> {
+        val e = edit.text
+        val t = e.toString()
+        val out = ArrayList<Triple<String, Int, Int>>()
+        var s0 = 0
+        while (s0 <= t.length && out.size < 800) {
+            val nl = t.indexOf('\n', s0)
+            val en = if (nl < 0) t.length else nl
+            var cs = s0
+            if (t.startsWith("• ", s0)) cs = s0 + 2
+            if (en > cs) {
+                for (r in e.getSpans(cs, en, RelativeSizeSpan::class.java)) {
+                    if (e.getSpanStart(r) <= cs && e.getSpanEnd(r) >= en) {
+                        val title = t.substring(cs, en).trim()
+                        if (title.isNotEmpty()) out.add(Triple(if (title.length > 90) title.take(87) + "…" else title, if (r.sizeChange >= 1.5f) 1 else 2, cs))
+                        break
+                    }
+                }
+            }
+            if (nl < 0) break
+            s0 = nl + 1
+        }
+        return out
+    }
+
+    private fun tocDialog() {
+        val hs = headings()
+        if (hs.isEmpty()) return toast("Keine Überschriften gefunden.")
+        AlertDialog.Builder(this)
+            .setTitle("Inhaltsverzeichnis")
+            .setItems(hs.map { (if (it.second > 1) "      " else "") + it.first }.toTypedArray()) { _, which ->
+                val off = hs[which].third
+                edit.requestFocus()
+                edit.setSelection(off.coerceIn(0, edit.text.length))
+                scrollTo(off)
+            }
+            .setNegativeButton("Schließen", null)
+            .show()
     }
 
     private fun noteKey(): String? = uri?.let { Notes.key(it.toString()) }
