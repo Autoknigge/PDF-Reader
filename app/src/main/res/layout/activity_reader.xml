@@ -226,7 +226,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
                     android:gravity="center"
-                    android:text="Wähle eine PDF-Datei aus – oder tippe in einer anderen App bzw. im Dateimanager auf eine PDF und wähle „PDF-Reader“.\n\nBlättern durch Wischen, Zoomen mit zwei Fingern oder Doppeltippen."
+                    android:text="Wähle eine Datei aus: PDF, Text, Word, E-Book, Comic oder Tabelle. Oder tippe in einer anderen App bzw. im Dateimanager auf die Datei und wähle „PDF-Reader“.\n\nBei PDFs: Blättern durch Wischen, Zoomen mit zwei Fingern oder Doppeltippen."
                     android:textColor="@color/text_gedimmt"
                     android:textSize="15sp" />
 
