@@ -837,9 +837,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun openReadSettings() {
         val s = ensureSpeaker() ?: return
-        menuDialog("🔊  Vorlesen", listOf("⏩" to "Geschwindigkeit", "🗣" to "Stimme"), "Schließen") { which ->
-            if (which == 0) chooseSpeed(s) else chooseVoice(s)
+        menuDialog("⚙  Einstellungen", listOf("⏩" to "Vorlesen: Geschwindigkeit", "🗣" to "Vorlesen: Stimme", "🌗" to "Anzeige: Hell, Dunkel, Lesemodus"), "Schließen") { which ->
+            when (which) {
+                0 -> chooseSpeed(s)
+                1 -> chooseVoice(s)
+                else -> chooseView()
+            }
         }
+    }
+
+    private fun chooseView() {
+        menuDialog(
+            "🌗  Anzeige",
+            listOf("☀" to "Hell", "🌙" to "Dunkel", "📖" to "Lesemodus (augenschonend)"),
+            "Schließen", viewMode
+        ) { which -> setViewMode(which) }
     }
 
     private fun chooseSpeed(s: Speaker) {
