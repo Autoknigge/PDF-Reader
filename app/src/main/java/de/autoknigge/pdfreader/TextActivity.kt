@@ -646,6 +646,74 @@ class TextActivity : AppCompatActivity() {
         MenuUi.show(this, name, e)
     }
 
+    // ------------------------------------------------------------------ Lesezeichen im Text
+
+    private fun marksKey(): String? = noteKey()?.let { "tm_$it" }
+
+    private fun loadMarks(): MutableList<Pair<Int, String>> {
+        val k = marksKey() ?: return ArrayList()
+        val j = prefs.getString(k, null) ?: return ArrayList()
+        return try {
+            val a = org.json.JSONArray(j)
+            (0 until a.length()).map { a.getJSONArray(it).let { x -> x.getInt(0) to x.getString(1) } }.toMutableList()
+        } catch (e: Exception) {
+            ArrayList()
+        }
+    }
+
+    private fun saveMarks(list: List<Pair<Int, String>>) {
+        val k = marksKey() ?: return
+        val a = org.json.JSONArray()
+        list.forEach { a.put(org.json.JSONArray().put(it.first).put(it.second)) }
+        prefs.edit().putString(k, a.toString()).apply()
+    }
+
+    /** Anfang des Absatzes, der oben im Fenster steht. */
+    private fun topParaStart(): Int {
+        val l = edit.layout ?: return 0
+        val off = l.getLineStart(l.getLineForVertical(scroll.scrollY.coerceAtLeast(0)))
+        val i = edit.text.lastIndexOf('\n', (off - 1).coerceAtLeast(0))
+        return if (off == 0 || i < 0) 0 else i + 1
+    }
+
+    private fun markHere(): Boolean {
+        val p = topParaStart()
+        return loadMarks().any { kotlin.math.abs(it.first - p) < 200 }
+    }
+
+    private fun toggleMark() {
+        if (marksKey() == null) return toast("Lesezeichen gibt es nur für geöffnete Dateien.")
+        val list = loadMarks()
+        val p = topParaStart()
+        val idx = list.indexOfFirst { kotlin.math.abs(it.first - p) < 200 }
+        if (idx >= 0) {
+            list.removeAt(idx)
+            toast("Lesezeichen entfernt.")
+        } else {
+            val t = edit.text
+            val snip = t.substring(p.coerceIn(0, t.length), minOf(t.length, p + 60)).replace('\n', ' ').trim()
+            list.add(p to snip)
+            list.sortBy { it.first }
+            toast("Lesezeichen gesetzt.")
+        }
+        saveMarks(list)
+    }
+
+    private fun marksDialog() {
+        val list = loadMarks()
+        if (list.isEmpty()) return toast("Noch keine Lesezeichen.")
+        MenuUi.show(
+            this, "Lesezeichen",
+            list.map { m ->
+                MenuUi.Entry("🔖", (if (m.second.length > 45) m.second.take(42) + "…" else m.second.ifEmpty { "Stelle " + m.first })) {
+                    edit.requestFocus()
+                    edit.setSelection(m.first.coerceIn(0, edit.text.length))
+                    scrollTo(m.first)
+                }
+            }
+        )
+    }
+
     // ------------------------------------------------------------------ Einstellungen (Zahnrad)
 
     private fun settingsMenu() {
