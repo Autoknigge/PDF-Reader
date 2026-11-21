@@ -17,6 +17,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
@@ -458,8 +461,73 @@ class MainActivity : AppCompatActivity() {
             )
         }
         items.add("📑" to "Inhaltsverzeichnis"); actions.add { showPdfToc(src) }
+        items.add("✏️" to "Text bearbeiten (als Word-Datei oder Text)"); actions.add { pdfToEditableText(src) }
         items.add("📝" to "Notizen zu dieser PDF"); actions.add { openPdfNotes(src.name, page) }
         menuDialog(src.name, items, "Schließen") { which -> actions[which]() }
+    }
+
+    /** Holt den Text aus der PDF und öffnet ihn im Text-Bildschirm zum Bearbeiten und Speichern als Word-Datei, Text oder PDF. */
+    private fun pdfToEditableText(src: PdfSource) {
+        toast("Text wird aus der PDF geholt …")
+        Thread {
+            val r = runCatching {
+                PDDocument.load(src.file, "", MemoryUsageSetting.setupMixed(48L * 1024 * 1024)).use { doc ->
+                    val st = PDFTextStripper()
+                    st.sortByPosition = true
+                    val raw = StringBuilder()
+                    for (p in 1..doc.numberOfPages) {
+                        st.startPage = p
+                        st.endPage = p
+                        raw.append(st.getText(doc)).append("\n\n")
+                    }
+                    raw.toString()
+                }
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                r.onSuccess { raw ->
+                    val text = tidyPdfText(raw)
+                    if (text.isBlank()) {
+                        toast("In dieser PDF wurde kein Text gefunden. Bei Scans und Bildern geht das nicht.")
+                    } else {
+                        val f = java.io.File(cacheDir, "pdf_text.txt")
+                        f.writeText(text, Charsets.UTF_8)
+                        startActivity(
+                            Intent(this, TextActivity::class.java)
+                                .putExtra(TextActivity.EXTRA_IMPORT_PATH, f.absolutePath)
+                                .putExtra(TextActivity.EXTRA_IMPORT_NAME, src.name)
+                        )
+                    }
+                }.onFailure { toast("Der Text konnte nicht aus der PDF geholt werden.") }
+            }
+        }.start()
+    }
+
+    /** Zeilenumbrüche mitten im Satz zusammenfügen, Silbentrennung am Zeilenende auflösen. */
+    private fun tidyPdfText(raw: String): String {
+        val lines = raw.replace("\r", "").split("\n")
+        val sb = StringBuilder()
+        var prev = ""
+        for (l0 in lines) {
+            val l = l0.trim()
+            if (l.isEmpty()) {
+                if (sb.isNotEmpty() && !sb.endsWith("\n\n")) sb.append("\n\n")
+                prev = ""
+                continue
+            }
+            if (prev.isNotEmpty()) {
+                if (prev.endsWith("-") && l.first().isLowerCase()) {
+                    sb.setLength(sb.length - 1)
+                } else if (!Regex("[.!?:;»“\"”)]$").containsMatchIn(prev) && l.first().isLowerCase()) {
+                    sb.append(' ')
+                } else {
+                    sb.append('\n')
+                }
+            }
+            sb.append(l)
+            prev = l
+        }
+        return sb.toString().replace(Regex("\n{3,}"), "\n\n").trim()
     }
 
     private fun showPdfToc(src: PdfSource) {

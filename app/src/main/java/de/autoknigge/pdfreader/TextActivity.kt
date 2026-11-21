@@ -69,6 +69,8 @@ class TextActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_NEW = "neu"
+        const val EXTRA_IMPORT_PATH = "import_pfad"
+        const val EXTRA_IMPORT_NAME = "import_name"
         const val EXTRA_PDFNOTE_KEY = "pdfnotiz_key"
         const val EXTRA_PDFNOTE_TITLE = "pdfnotiz_titel"
         const val EXTRA_PDFNOTE_PAGE = "pdfnotiz_seite"
@@ -251,6 +253,7 @@ class TextActivity : AppCompatActivity() {
         top.addView(tvTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         top.addView(iconButton("🔊", "Vorlesen") { startReading() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(iconButton("💾", "Speichern") { save() }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        top.addView(iconButton("⚙", "Einstellungen") { lookDialog() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(iconButton("⋮", "Mehr") { openMenu() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -332,6 +335,7 @@ class TextActivity : AppCompatActivity() {
     private fun start() {
         val i = intent
         when {
+            i.hasExtra(EXTRA_IMPORT_PATH) -> importText(i)
             i.hasExtra(EXTRA_PDFNOTE_KEY) -> openPdfNote(i)
             i.getBooleanExtra(EXTRA_NEW, false) -> newNote("")
             i.action == Intent.ACTION_SEND && i.hasExtra(Intent.EXTRA_TEXT) ->
@@ -356,6 +360,33 @@ class TextActivity : AppCompatActivity() {
         updateTitle()
         edit.requestFocus()
         showKeyboard()
+    }
+
+    /** Text, der aus einer PDF übernommen wurde: bearbeiten, dann als Word-Datei, Text oder PDF speichern. */
+    private fun importText(i: Intent) {
+        val path = i.getStringExtra(EXTRA_IMPORT_PATH) ?: return finish()
+        name = (i.getStringExtra(EXTRA_IMPORT_NAME) ?: "Text").substringBeforeLast('.') + ".txt"
+        converted = true
+        docx = false
+        updateTitle()
+        worker.execute {
+            val r = runCatching { java.io.File(path).readText(Charsets.UTF_8) }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                r.onSuccess { t ->
+                    loading = true
+                    edit.setText(t)
+                    edit.isEnabled = true
+                    loading = false
+                    dirty = true
+                    updateTitle()
+                    toast("Nur der Text der PDF wurde übernommen, ohne Bilder und Layout. Zum Speichern: Menü ⋮, „Speichern unter“, zum Beispiel als Word-Datei.")
+                }.onFailure {
+                    toast("Der Text konnte nicht übernommen werden.")
+                    finish()
+                }
+            }
+        }
     }
 
     private fun openPdfNote(i: Intent) {
@@ -575,27 +606,86 @@ class TextActivity : AppCompatActivity() {
     }
 
     private fun openMenu() {
-        val items = ArrayList<Pair<String, () -> Unit>>()
-        items.add("Suchen …" to { searchDialog() })
-        items.add("Weitersuchen" to { findNext() })
-        if (!pdfNote && headings().isNotEmpty()) items.add("Inhaltsverzeichnis" to { tocDialog() })
-        items.add("Darstellung: Schrift, Farbe, Ausrichtung …" to { lookDialog() })
-        items.add("Schrift größer" to { setSize(sizeSp + 2f) })
-        items.add("Schrift kleiner" to { setSize(sizeSp - 2f) })
-        if (!pdfNote && uri != null) items.add("Notizen und Zitate zu dieser Datei" to { openNotes() })
-        items.add("Vorlesetempo …" to { tempoDialog() })
-        if (pdfNote) items.add("Seitenverweis einfügen (S. ${pdfNotePage + 1})" to { insertAtCursor("S. ${pdfNotePage + 1}: ") })
-        items.add("Alles markieren und kopieren" to { copyAll() })
-        items.add("Als Text speichern unter …" to { saveAs.launch(baseName() + ".txt") })
-        items.add("Als Word-Datei (.docx) speichern …" to { saveDocx.launch(baseName() + ".docx") })
-        items.add("Als PDF speichern …" to { savePdf.launch(baseName() + ".pdf") })
-        items.add("Teilen / Senden an …" to { share() })
-        if (sheets != null) items.add((if (tableMode) "Als Text anzeigen" else "Als Tabelle anzeigen") to { showTable(!tableMode) })
-        AlertDialog.Builder(this)
-            .setTitle(name)
-            .setItems(items.map { it.first }.toTypedArray()) { _, which -> items[which].second() }
-            .setNegativeButton("Schließen", null)
-            .show()
+        val e = ArrayList<MenuUi.Entry>()
+        // Gemeinsame Punkte, gleich aufgebaut wie im PDF-Menü
+        e.add(MenuUi.Entry("🔍", "Im Text suchen …") { searchDialog() })
+        if (!pdfNote && headings().isNotEmpty()) e.add(MenuUi.Entry("📑", "Inhaltsverzeichnis") { tocDialog() })
+        e.add(MenuUi.Entry("📤", "Senden an …") { share() })
+        e.add(MenuUi.Entry("💾", "Speichern unter …") { saveChooser() })
+        e.add(MenuUi.Entry("🖨", "Drucken") { printText() })
+        if (!pdfNote && uri != null) e.add(MenuUi.Entry("📝", "Notizen und Zitate zu dieser Datei") { openNotes() })
+        // Nur im Text-Bildschirm
+        e.add(MenuUi.Entry("🔠", "", label = { "Schrift " + sizeSp.toInt() }, minus = { setSize(sizeSp - 1f) }, plus = { setSize(sizeSp + 1f) }))
+        e.add(MenuUi.Entry("🎨", "Darstellung und Einstellungen …") { lookDialog() })
+        e.add(MenuUi.Entry("⏭", "Weitersuchen") { findNext() })
+        e.add(MenuUi.Entry("📋", "Alles markieren und kopieren") { copyAll() })
+        if (pdfNote) e.add(MenuUi.Entry("🔖", "Seitenverweis einfügen (S. ${pdfNotePage + 1})") { insertAtCursor("S. ${pdfNotePage + 1}: ") })
+        if (sheets != null) e.add(MenuUi.Entry("📊", if (tableMode) "Als Text anzeigen" else "Als Tabelle anzeigen") { showTable(!tableMode) })
+        MenuUi.show(this, name, e)
+    }
+
+    private fun saveChooser() {
+        MenuUi.show(
+            this, "Speichern unter",
+            listOf(
+                MenuUi.Entry("📝", "Als Text (.txt)") { saveAs.launch(baseName() + ".txt") },
+                MenuUi.Entry("📄", "Als Word-Datei (.docx)") { saveDocx.launch(baseName() + ".docx") },
+                MenuUi.Entry("📕", "Als PDF") { savePdf.launch(baseName() + ".pdf") }
+            ),
+            "Abbrechen"
+        )
+    }
+
+    private fun printText() {
+        if (loading || edit.text.isBlank()) return toast("Es gibt noch nichts zum Drucken.")
+        val services = packageManager.queryIntentServices(Intent("android.printservice.PrintService"), 0)
+        if (services.isEmpty()) return toast("Kein Druckdienst gefunden. Speichere als PDF (Menü ⋮, Speichern unter) und drucke mit einer Drucker-App.")
+        worker.execute {
+            try {
+                val bytes = makePdf()
+                val f = java.io.File(cacheDir, "druck.pdf")
+                f.writeBytes(bytes)
+                runOnUiThread { startPrint(f) }
+            } catch (t: Throwable) {
+                runOnUiThread { toast("Das Drucken konnte nicht vorbereitet werden.") }
+            }
+        }
+    }
+
+    private fun startPrint(f: java.io.File) {
+        val pm = getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+        val jobName = baseName() + ".pdf"
+        val adapter = object : android.print.PrintDocumentAdapter() {
+            override fun onLayout(
+                old: android.print.PrintAttributes?, new: android.print.PrintAttributes?,
+                cancel: android.os.CancellationSignal?, callback: LayoutResultCallback, extras: Bundle?
+            ) {
+                if (cancel?.isCanceled == true) {
+                    callback.onLayoutCancelled()
+                    return
+                }
+                val info = android.print.PrintDocumentInfo.Builder(jobName)
+                    .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                    .setPageCount(android.print.PrintDocumentInfo.PAGE_COUNT_UNKNOWN)
+                    .build()
+                callback.onLayoutFinished(info, true)
+            }
+
+            override fun onWrite(
+                pages: Array<out android.print.PageRange>?, dest: android.os.ParcelFileDescriptor,
+                cancel: android.os.CancellationSignal?, callback: WriteResultCallback
+            ) {
+                try {
+                    java.io.FileInputStream(f).use { input ->
+                        java.io.FileOutputStream(dest.fileDescriptor).use { output -> input.copyTo(output) }
+                    }
+                    callback.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+                } catch (e: Exception) {
+                    callback.onWriteFailed(e.message)
+                }
+            }
+        }
+        pm.print(jobName, adapter, null)
     }
 
     private fun baseName() = name.substringBeforeLast('.', name).replace(Regex("[\\\\/:*?\"<>|]"), "_")
@@ -1031,12 +1121,22 @@ class TextActivity : AppCompatActivity() {
         box.addView(bar(10, ((zeile - 1.0f) * 10f).toInt().coerceIn(0, 10)) { zeile = 1.0f + it / 10f; prefs.edit().putFloat("text_zeile", zeile).apply(); applyLook() })
         box.addView(label("Seitenrand"))
         box.addView(bar(48, randDp) { randDp = it; prefs.edit().putInt("text_rand", it).apply(); applyLook() })
+        box.addView(label("Vorlesetempo"))
+        val tempoNames = listOf("Langsam (0,75)", "Normal (1,0)", "Etwas schneller (1,25)", "Schnell (1,5)", "Sehr schnell (2,0)")
+        val tempoValues = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+        val curRate = prefs.getFloat("tts_rate", 1.0f)
+        val curIdx = tempoValues.indices.minByOrNull { kotlin.math.abs(tempoValues[it] - curRate) } ?: 1
+        box.addView(spinner(tempoNames, curIdx) {
+            prefs.edit().putFloat("tts_rate", tempoValues[it]).apply()
+            tts?.setSpeechRate(tempoValues[it])
+            if (reading == Read.PLAYING) { gen++; speakChunk() }
+        })
         box.addView(TextView(this).apply {
             text = "Schriften: Lora, Atkinson Hyperlegible, OpenDyslexic und Comic Neue (SIL Open Font License)."
             textSize = 11f; setPadding(0, dp(14), 0, dp(6))
         })
         AlertDialog.Builder(this)
-            .setTitle("Darstellung")
+            .setTitle("Einstellungen")
             .setView(ScrollView(this).apply { addView(box) })
             .setPositiveButton("Fertig", null)
             .show()
