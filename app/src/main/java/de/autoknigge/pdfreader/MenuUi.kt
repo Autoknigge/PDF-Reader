@@ -25,7 +25,8 @@ object MenuUi {
         val onClick: (() -> Unit)? = null
     )
 
-    fun show(ctx: Context, title: String, entries: List<Entry>, closeLabel: String = "Schließen") {
+    fun show(ctx: Context, title: String, entries: List<Entry>, closeLabel: String = "Schließen", checked: Int = -1, keepOpen: Boolean = false) {
+        var sel = checked
         val d = ctx.resources.displayMetrics.density
         lateinit var dialog: AlertDialog
         val list = ListView(ctx).apply {
@@ -56,6 +57,14 @@ object MenuUi {
                     setTextColor(ctx.getColor(R.color.text_hell))
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 })
+                if (i == sel) {
+                    row.setBackgroundColor(0x33D4AF37)
+                    row.addView(TextView(ctx).apply {
+                        text = "✓"
+                        textSize = 22f
+                        setTextColor(ctx.getColor(R.color.gold))
+                    })
+                }
                 if (e.minus != null && e.plus != null) {
                     fun btn(t: String, action: () -> Unit) = TextView(ctx).apply {
                         text = t
@@ -78,8 +87,14 @@ object MenuUi {
         list.setOnItemClickListener { _, _, which, _ ->
             val e = entries[which]
             if (e.minus != null) return@setOnItemClickListener
-            dialog.dismiss()
-            e.onClick?.invoke()
+            if (keepOpen) {
+                sel = which
+                adapter.notifyDataSetChanged()
+                e.onClick?.invoke()
+            } else {
+                dialog.dismiss()
+                e.onClick?.invoke()
+            }
         }
         val titleView = TextView(ctx).apply {
             text = title

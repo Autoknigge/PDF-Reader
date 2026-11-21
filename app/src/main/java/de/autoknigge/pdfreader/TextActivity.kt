@@ -261,7 +261,7 @@ class TextActivity : AppCompatActivity() {
         top.addView(tvTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         top.addView(iconButton("🔊", "Vorlesen") { startReading() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(iconButton("💾", "Speichern") { save() }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        top.addView(iconButton("⚙", "Einstellungen") { lookDialog() }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        top.addView(iconButton("⚙", "Einstellungen") { settingsMenu() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(iconButton("⋮", "Mehr") { openMenu() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -640,11 +640,92 @@ class TextActivity : AppCompatActivity() {
         e.add(MenuUi.Entry("🖨", "Drucken") { printText() })
         // Nur im Text-Bildschirm
         e.add(MenuUi.Entry("🔠", "", label = { "Schrift " + sizeSp.toInt() }, minus = { setSize(sizeSp - 1f) }, plus = { setSize(sizeSp + 1f) }))
-        e.add(MenuUi.Entry("🎨", "Darstellung und Einstellungen …") { lookDialog() })
         e.add(MenuUi.Entry("📋", "Alles markieren und kopieren") { copyAll() })
         if (pdfNote) e.add(MenuUi.Entry("📍", "Seitenverweis einfügen (S. ${pdfNotePage + 1})") { insertAtCursor("S. ${pdfNotePage + 1}: ") })
         if (sheets != null) e.add(MenuUi.Entry("📊", if (tableMode) "Als Text anzeigen" else "Als Tabelle anzeigen") { showTable(!tableMode) })
         MenuUi.show(this, name, e)
+    }
+
+    // ------------------------------------------------------------------ Einstellungen (Zahnrad)
+
+    private fun settingsMenu() {
+        MenuUi.show(
+            this, "⚙  Einstellungen",
+            listOf(
+                MenuUi.Entry("⏩", "Vorlesen: Geschwindigkeit") { speedMenu() },
+                MenuUi.Entry("🗣", "Vorlesen: Stimme") { voiceMenu() },
+                MenuUi.Entry("🌗", "Anzeige: Hell, Dunkel, Sepia …") { colorMenu() },
+                MenuUi.Entry("🎨", "Schrift und Darstellung …") { lookDialog() }
+            )
+        )
+    }
+
+    private fun colorMenu() {
+        MenuUi.show(
+            this, "🌗  Anzeige",
+            profile.mapIndexed { i, p ->
+                MenuUi.Entry("●", p.name) {
+                    profil = i; dark = p.dark
+                    prefs.edit().putInt("text_profil", i).apply()
+                    applyLook()
+                }
+            },
+            "Schließen", profil, true
+        )
+    }
+
+    private fun speedMenu() {
+        val labels = listOf("Langsam", "Etwas langsamer", "Normal", "Schneller", "Schnell", "Sehr schnell")
+        val rates = floatArrayOf(0.7f, 0.85f, 1.0f, 1.25f, 1.5f, 1.8f)
+        val icons = listOf("🐢", "🚶", "👌", "🏃", "⚡", "🚀")
+        val cur = prefs.getFloat("tts_rate", 1.0f)
+        val idx = rates.indices.minByOrNull { kotlin.math.abs(rates[it] - cur) } ?: 2
+        MenuUi.show(
+            this, "⏩  Geschwindigkeit",
+            labels.indices.map { i ->
+                MenuUi.Entry(icons[i], labels[i]) {
+                    prefs.edit().putFloat("tts_rate", rates[i]).apply()
+                    tts?.setSpeechRate(rates[i])
+                    if (reading == Read.PLAYING) { gen++; speakChunk() }
+                }
+            },
+            "Schließen", idx, true
+        )
+    }
+
+    private fun voiceMenu() {
+        ensureTts {
+            val t = tts ?: return@ensureTts
+            val voices = try {
+                t.voices.orEmpty()
+                    .filter { it.locale.language == "de" && !it.name.endsWith("-language", ignoreCase = true) }
+                    .sortedByDescending { it.quality }
+                    .distinctBy { it.name.substringBefore('#').lowercase() }
+                    .take(6)
+            } catch (e: Exception) {
+                emptyList()
+            }
+            if (voices.isEmpty()) {
+                toast("Keine deutsche Stimme gefunden. Du kannst in den Android-Einstellungen unter „Sprachausgabe“ eine installieren.")
+                return@ensureTts
+            }
+            val saved = prefs.getString("tts_voice", null)
+            val cur = voices.indexOfFirst { it.name == saved }
+            val entries = voices.mapIndexed { i, v ->
+                val q = when {
+                    v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> " · sehr gut"
+                    v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> " · gut"
+                    else -> ""
+                }
+                val land = when (v.locale.country) { "AT" -> " (Österreich)"; "CH" -> " (Schweiz)"; else -> "" }
+                MenuUi.Entry("🔈", "Stimme ${i + 1}$q$land") {
+                    prefs.edit().putString("tts_voice", v.name).apply()
+                    try { t.voice = v } catch (ignored: Exception) {}
+                    t.speak("Hallo, so klingt diese Stimme beim Vorlesen.", TextToSpeech.QUEUE_FLUSH, null, "preview")
+                }
+            }
+            MenuUi.show(this, "🗣  Stimme – antippen zum Anhören", entries, "Fertig", cur, true)
+        }
     }
 
     private fun saveChooser() {
@@ -1209,22 +1290,12 @@ class TextActivity : AppCompatActivity() {
         box.addView(bar(10, ((zeile - 1.0f) * 10f).toInt().coerceIn(0, 10)) { zeile = 1.0f + it / 10f; prefs.edit().putFloat("text_zeile", zeile).apply(); applyLook() })
         box.addView(label("Seitenrand"))
         box.addView(bar(48, randDp) { randDp = it; prefs.edit().putInt("text_rand", it).apply(); applyLook() })
-        box.addView(label("Vorlesetempo"))
-        val tempoNames = listOf("Langsam (0,75)", "Normal (1,0)", "Etwas schneller (1,25)", "Schnell (1,5)", "Sehr schnell (2,0)")
-        val tempoValues = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-        val curRate = prefs.getFloat("tts_rate", 1.0f)
-        val curIdx = tempoValues.indices.minByOrNull { kotlin.math.abs(tempoValues[it] - curRate) } ?: 1
-        box.addView(spinner(tempoNames, curIdx) {
-            prefs.edit().putFloat("tts_rate", tempoValues[it]).apply()
-            tts?.setSpeechRate(tempoValues[it])
-            if (reading == Read.PLAYING) { gen++; speakChunk() }
-        })
         box.addView(TextView(this).apply {
             text = "Schriften: Lora, Atkinson Hyperlegible, OpenDyslexic und Comic Neue (SIL Open Font License)."
             textSize = 11f; setPadding(0, dp(14), 0, dp(6))
         })
         AlertDialog.Builder(this)
-            .setTitle("Einstellungen")
+            .setTitle("Schrift und Darstellung")
             .setView(ScrollView(this).apply { addView(box) })
             .setPositiveButton("Fertig", null)
             .show()

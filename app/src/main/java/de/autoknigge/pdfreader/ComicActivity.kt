@@ -80,6 +80,10 @@ class ComicActivity : AppCompatActivity() {
         tvPage = TextView(this).apply { textSize = 15f; setTextColor(0xFFF8E7A4.toInt()) }
         top.addView(tvPage)
         top.addView(TextView(this).apply {
+            text = "⚙"; textSize = 24f; setTextColor(0xFFD4AF37.toInt()); gravity = Gravity.CENTER
+            contentDescription = "Einstellungen"; setOnClickListener { settingsMenu() }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        top.addView(TextView(this).apply {
             text = "⋮"; textSize = 24f; setTextColor(0xFFD4AF37.toInt()); gravity = Gravity.CENTER
             contentDescription = "Mehr"; setOnClickListener { openMenu() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
@@ -103,6 +107,7 @@ class ComicActivity : AppCompatActivity() {
         Intro.run(this) { adManager.start() }
 
         library = Library(this)
+        applyBackground()
         val u = intent.data
         if (u == null) {
             Toast.makeText(this, "Keine Datei übergeben.", Toast.LENGTH_LONG).show()
@@ -215,6 +220,37 @@ class ComicActivity : AppCompatActivity() {
         // Nur bei Comics
         e.add(MenuUi.Entry("🔢", "Zu Seite springen …") { gotoDialog() })
         MenuUi.show(this, docName, e)
+    }
+
+    private val prefs by lazy { getSharedPreferences("pdfreader", MODE_PRIVATE) }
+
+    private fun applyBackground() {
+        pager.setBackgroundColor(
+            when (prefs.getInt("comic_bg", 1)) {
+                0 -> 0xFF1A2C20.toInt()
+                2 -> 0xFFFFFFFF.toInt()
+                else -> 0xFF000000.toInt()
+            }
+        )
+    }
+
+    private fun settingsMenu() {
+        MenuUi.show(
+            this, "⚙  Einstellungen",
+            listOf(
+                MenuUi.Entry("🌗", "Anzeige: Hintergrund …") {
+                    MenuUi.show(
+                        this, "🌗  Hintergrund",
+                        listOf(
+                            MenuUi.Entry("🟢", "Dunkelgrün") { prefs.edit().putInt("comic_bg", 0).apply(); applyBackground() },
+                            MenuUi.Entry("⚫", "Schwarz") { prefs.edit().putInt("comic_bg", 1).apply(); applyBackground() },
+                            MenuUi.Entry("⚪", "Weiß") { prefs.edit().putInt("comic_bg", 2).apply(); applyBackground() }
+                        ),
+                        "Schließen", prefs.getInt("comic_bg", 1), true
+                    )
+                }
+            )
+        )
     }
 
     private fun bookmarkList() {
