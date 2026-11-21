@@ -226,7 +226,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
                     android:gravity="center"
-                    android:text="Wähle eine Datei aus: PDF, Text, Word, E-Book, Comic oder Tabelle. Oder tippe in einer anderen App bzw. im Dateimanager auf die Datei und wähle „PDF-Reader“.\n\nBei PDFs: Blättern durch Wischen, Zoomen mit zwei Fingern oder Doppeltippen."
+                    android:text="Wähle bei „Datei öffnen“ eine beliebige Textdatei aus oder tippe im Dateimanager lange auf die zu öffnende Datei und wähle bei „Öffnen mit“ den PDF-Reader als Standard.\n\nZoomen und Blättern in PDFs wie gewohnt."
                     android:textColor="@color/text_gedimmt"
                     android:textSize="15sp" />
 
