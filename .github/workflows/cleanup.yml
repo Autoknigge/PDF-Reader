@@ -1,0 +1,26 @@
+name: Alte Läufe löschen
+
+# Löscht alle Build-Läufe bis auf die neuesten 3 (damit auch deren Dateien).
+# Manuell starten: Actions -> "Alte Läufe löschen" -> Run workflow.
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Alte Läufe löschen
+        run: |
+          for i in 1 2 3 4 5; do
+            IDS=$(gh run list --workflow build.yml --limit 1000 --json databaseId --jq '.[].databaseId' | tail -n +4)
+            [ -z "$IDS" ] && break
+            echo "$IDS" | while read -r id; do gh run delete "$id" || true; done
+          done
+          echo "Fertig."
