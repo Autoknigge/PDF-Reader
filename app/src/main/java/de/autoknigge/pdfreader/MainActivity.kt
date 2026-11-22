@@ -200,7 +200,10 @@ class MainActivity : AppCompatActivity() {
             "application/vnd.oasis.opendocument.text", "application/epub+zip",
             "application/rtf", "application/xhtml+xml",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.oasis.opendocument.spreadsheet", "application/octet-stream"
+            "application/vnd.oasis.opendocument.spreadsheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+            "application/vnd.oasis.opendocument.presentation", "application/vnd.ms-powerpoint", "application/octet-stream"
         ))
     }
 
@@ -638,6 +641,7 @@ class MainActivity : AppCompatActivity() {
             n.endsWith(".docx") || n.endsWith(".odt") || n.endsWith(".rtf") -> "Textdokument"
             n.endsWith(".epub") || n.endsWith(".fb2") -> "E-Book"
             n.endsWith(".xlsx") || n.endsWith(".xlsm") || n.endsWith(".ods") -> "Tabelle"
+            n.endsWith(".pptx") || n.endsWith(".ppt") || n.endsWith(".odp") || n.endsWith(".ppsx") -> "Präsentation"
             n.endsWith(".html") || n.endsWith(".htm") -> "Webseite"
             else -> "Textdatei"
         }

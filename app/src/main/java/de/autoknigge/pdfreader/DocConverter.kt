@@ -16,13 +16,16 @@ object DocConverter {
     private const val MAX_ENTRY = 16 * 1024 * 1024
     private const val MAX_TEXT = 6_000_000
 
-    enum class Kind { TEXT, DOCX, ODT, EPUB, HTML, RTF, XLSX, ODS, FB2 }
+    enum class Kind { TEXT, DOCX, ODT, EPUB, HTML, RTF, XLSX, ODS, FB2, PPTX, ODP, PPT }
 
     fun kindOf(name: String, mime: String?): Kind {
         val n = name.lowercase()
         return when {
             n.endsWith(".docx") -> Kind.DOCX
             n.endsWith(".fb2") -> Kind.FB2
+            n.endsWith(".pptx") || n.endsWith(".pptm") || n.endsWith(".ppsx") -> Kind.PPTX
+            n.endsWith(".odp") -> Kind.ODP
+            n.endsWith(".ppt") || n.endsWith(".pps") -> Kind.PPT
             n.endsWith(".odt") -> Kind.ODT
             n.endsWith(".xlsx") || n.endsWith(".xlsm") -> Kind.XLSX
             n.endsWith(".ods") -> Kind.ODS
@@ -31,6 +34,10 @@ object DocConverter {
             n.endsWith(".rtf") -> Kind.RTF
             mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> Kind.DOCX
             mime == "application/x-fictionbook+xml" || mime == "application/x-fictionbook" -> Kind.FB2
+            mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> Kind.PPTX
+            mime == "application/vnd.openxmlformats-officedocument.presentationml.slideshow" -> Kind.PPTX
+            mime == "application/vnd.oasis.opendocument.presentation" -> Kind.ODP
+            mime == "application/vnd.ms-powerpoint" -> Kind.PPT
             mime == "application/vnd.oasis.opendocument.text" -> Kind.ODT
             mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> Kind.XLSX
             mime == "application/vnd.oasis.opendocument.spreadsheet" -> Kind.ODS
@@ -59,6 +66,9 @@ object DocConverter {
             Kind.ODT -> odt(bytes)
             Kind.XLSX, Kind.ODS -> sheetsToText(sheets(kind, bytes))
             Kind.FB2 -> richToText(fb2Rich(bytes))
+            Kind.PPTX -> richToText(pptxRich(bytes))
+            Kind.ODP -> richToText(odpRich(bytes))
+            Kind.PPT -> throw IOException("Das alte PowerPoint-Format (.ppt) kann ich nicht lesen. Speichere die Präsentation in PowerPoint als .pptx oder exportiere sie als PDF.")
             Kind.EPUB -> epub(bytes)
             Kind.HTML -> html(decode(bytes))
             Kind.RTF -> rtf(decode(bytes))
@@ -502,6 +512,159 @@ object DocConverter {
             }
         }
         return parts.joinToString("/")
+    }
+
+    // ---------------------------------------------------------------- Präsentationen (PowerPoint, OpenDocument)
+
+    private fun attrFull(p: XmlPullParser, full: String): String? {
+        for (i in 0 until p.attributeCount) if (p.getAttributeName(i) == full) return p.getAttributeValue(i)
+        return null
+    }
+
+    /** Text einer Folien-Datei: Titel und übrige Absätze. */
+    private fun slideTexts(xml: ByteArray, skipPh: Set<String> = emptySet()): Pair<String, List<Pair<Int, String>>> {
+        val p = parser(xml)
+        var ev = p.eventType
+        var title = ""
+        val body = ArrayList<Pair<Int, String>>()
+        var inSp = false
+        var phType = ""
+        var shape = ArrayList<Pair<Int, String>>()
+        var lvl = 0
+        val cur = StringBuilder()
+        var inT = false
+        var inPara = false
+        while (ev != XmlPullParser.END_DOCUMENT) {
+            when (ev) {
+                XmlPullParser.START_TAG -> when (ln(p)) {
+                    "sp" -> { inSp = true; phType = ""; shape = ArrayList() }
+                    "ph" -> if (inSp) phType = attr(p, "type") ?: "body"
+                    "p" -> { inPara = true; cur.setLength(0); lvl = 0 }
+                    "pPr" -> if (inPara) lvl = attr(p, "lvl")?.toIntOrNull() ?: 0
+                    "t" -> inT = true
+                    "br" -> if (inPara) cur.append(' ')
+                }
+                XmlPullParser.END_TAG -> when (ln(p)) {
+                    "t" -> inT = false
+                    "p" -> if (inPara) {
+                        inPara = false
+                        val t = cur.toString().trim()
+                        if (t.isNotEmpty()) (if (inSp) shape else body).add(lvl to t)
+                    }
+                    "sp" -> if (inSp) {
+                        inSp = false
+                        if (phType in skipPh) {
+                            // z. B. Foliennummer, Folienbild
+                        } else if (phType == "title" || phType == "ctrTitle") {
+                            if (title.isEmpty()) title = shape.joinToString(" ") { it.second }
+                        } else {
+                            body.addAll(shape)
+                        }
+                    }
+                }
+                XmlPullParser.TEXT -> if (inT && inPara) cur.append(p.text)
+            }
+            ev = p.next()
+        }
+        return title to body
+    }
+
+    fun pptxRich(bytes: ByteArray): List<RichPara> {
+        val files = unzip(bytes)
+        val pres = files["ppt/presentation.xml"] ?: throw IOException("Das ist keine gültige PowerPoint-Datei.")
+        val rels = HashMap<String, String>()
+        files["ppt/_rels/presentation.xml.rels"]?.let { b ->
+            val p = parser(b)
+            var ev = p.eventType
+            while (ev != XmlPullParser.END_DOCUMENT) {
+                if (ev == XmlPullParser.START_TAG && ln(p) == "Relationship") {
+                    val id = attr(p, "Id"); val t = attr(p, "Target")
+                    if (id != null && t != null) rels[id] = t
+                }
+                ev = p.next()
+            }
+        }
+        val order = ArrayList<String>()
+        parser(pres).let { p ->
+            var ev = p.eventType
+            while (ev != XmlPullParser.END_DOCUMENT) {
+                if (ev == XmlPullParser.START_TAG && ln(p) == "sldId") attrFull(p, "r:id")?.let { order.add(it) }
+                ev = p.next()
+            }
+        }
+        val out = ArrayList<RichPara>()
+        var n = 0
+        for (rid in order) {
+            val target = rels[rid] ?: continue
+            val path = if (target.startsWith("/")) target.trimStart('/') else resolve("ppt/", target)
+            val data = files[path] ?: continue
+            n++
+            val (title, body) = slideTexts(data, setOf("sldNum", "dt", "ftr", "sldImg"))
+            out.add(RichPara(1, false, listOf(RichRun("Folie $n" + (if (title.isNotEmpty()) ": $title" else ""), false, false))))
+            for ((l, t) in body) out.add(RichPara(0, false, listOf(RichRun("    ".repeat(l.coerceIn(0, 4)) + t, false, false))))
+            // Notizen zur Folie
+            val relFile = path.substringBeforeLast('/') + "/_rels/" + path.substringAfterLast('/') + ".rels"
+            var notesPath: String? = null
+            files[relFile]?.let { b ->
+                val p = parser(b)
+                var ev = p.eventType
+                while (ev != XmlPullParser.END_DOCUMENT) {
+                    if (ev == XmlPullParser.START_TAG && ln(p) == "Relationship" && (attr(p, "Type") ?: "").endsWith("/notesSlide")) {
+                        attr(p, "Target")?.let { notesPath = resolve(path.substringBeforeLast('/') + "/", it) }
+                    }
+                    ev = p.next()
+                }
+            }
+            val nd = notesPath?.let { files[it] }
+            if (nd != null) {
+                val (_, nb) = slideTexts(nd, setOf("sldNum", "sldImg", "hdr", "dt", "ftr"))
+                val nt = nb.joinToString(" ") { it.second }.trim()
+                if (nt.isNotEmpty()) out.add(RichPara(0, false, listOf(RichRun("Notizen: $nt", false, true))))
+            }
+            out.add(RichPara(0, false, emptyList()))
+            if (out.size > 200000) break
+        }
+        if (out.isEmpty()) throw IOException("In dieser Präsentation wurde kein Text gefunden.")
+        return out
+    }
+
+    fun odpRich(bytes: ByteArray): List<RichPara> {
+        val files = unzip(bytes)
+        val doc = files["content.xml"] ?: throw IOException("Das ist keine gültige Präsentation.")
+        val out = ArrayList<RichPara>()
+        val p = parser(doc)
+        var ev = p.eventType
+        var n = 0
+        var inPage = false
+        var depthPara = false
+        val cur = StringBuilder()
+        var first = true
+        while (ev != XmlPullParser.END_DOCUMENT) {
+            when (ev) {
+                XmlPullParser.START_TAG -> when (ln(p)) {
+                    "page" -> {
+                        if (n > 0) out.add(RichPara(0, false, emptyList()))
+                        n++; inPage = true; first = true
+                        out.add(RichPara(1, false, listOf(RichRun("Folie $n", false, false))))
+                    }
+                    "p", "h" -> if (inPage) { depthPara = true; cur.setLength(0) }
+                    "s" -> if (depthPara) cur.append(' ')
+                    "line-break" -> if (depthPara) cur.append(' ')
+                }
+                XmlPullParser.END_TAG -> when (ln(p)) {
+                    "page" -> inPage = false
+                    "p", "h" -> if (depthPara) {
+                        depthPara = false
+                        val t = cur.toString().trim()
+                        if (t.isNotEmpty()) out.add(RichPara(0, false, listOf(RichRun(t, false, false))))
+                    }
+                }
+                XmlPullParser.TEXT -> if (depthPara) cur.append(p.text)
+            }
+            ev = p.next()
+        }
+        if (n == 0 || out.none { it.level == 0 && it.runs.isNotEmpty() }) throw IOException("In dieser Präsentation wurde kein Text gefunden.")
+        return out
     }
 
     // ---------------------------------------------------------------- FB2 und EPUB mit Überschriften

@@ -448,10 +448,17 @@ class TextActivity : AppCompatActivity() {
             var sh: List<DocConverter.Sheet>? = null
             var own = false
             val result = runCatching<CharSequence> {
-                if (kind == DocConverter.Kind.FB2 || kind == DocConverter.Kind.EPUB) {
+                if (kind == DocConverter.Kind.FB2 || kind == DocConverter.Kind.EPUB || kind == DocConverter.Kind.PPTX || kind == DocConverter.Kind.ODP) {
                     val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
                         ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
-                    buildSpannable(if (kind == DocConverter.Kind.FB2) DocConverter.fb2Rich(bytes) else DocConverter.epubRich(bytes))
+                    buildSpannable(
+                        when (kind) {
+                            DocConverter.Kind.FB2 -> DocConverter.fb2Rich(bytes)
+                            DocConverter.Kind.PPTX -> DocConverter.pptxRich(bytes)
+                            DocConverter.Kind.ODP -> DocConverter.odpRich(bytes)
+                            else -> DocConverter.epubRich(bytes)
+                        }
+                    )
                 } else if (kind == DocConverter.Kind.DOCX) {
                     val bytes = contentResolver.openInputStream(u)?.use { DocConverter.readAll(it, DocConverter.MAX_FILE) }
                         ?: throw IOException("Die Datei konnte nicht geöffnet werden.")
